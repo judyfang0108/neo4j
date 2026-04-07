@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env
+
+# Environment variables / secrets
+*.env
+.env.*
+!.env.example
+secrets.json
+credentials.json
+
+# Neo4j
+neo4j/data/
+neo4j/logs/
+neo4j/import/
+neo4j/plugins/
+data/
+logs/
+import/
+plugins/
+*.db
+*.dump
+
+# Docker
+.docker/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+
+schema.json
