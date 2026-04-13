@@ -6,6 +6,7 @@ NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "testpassword")
 SCHEMA_FILE = os.environ.get("SCHEMA_FILE", "schema.json")
+NEO4J_DATABASE = os.environ.get("NEO4J_DATABASE", "neo4j")
 
 
 def load_schema(path):
@@ -144,7 +145,7 @@ def build_graph(tx, schema):
 def main():
     schema = load_schema(SCHEMA_FILE)
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-    with driver.session() as session:
+    with driver.session(database=NEO4J_DATABASE) as session:
         session.execute_write(create_constraints)
         session.execute_write(build_graph, schema)
     driver.close()

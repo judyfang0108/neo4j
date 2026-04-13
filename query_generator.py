@@ -65,9 +65,10 @@ class QueryGenerator:
         uri = self._get_env("NEO4J_URI", "bolt://localhost:7687")
         user = self._get_env("NEO4J_USER", "neo4j")
         password = self._get_env("NEO4J_PASSWORD", "testpassword")
+        self.neo4j_database = self._get_env("NEO4J_DATABASE", "neo4j")
         driver = GraphDatabase.driver(uri, auth=(user, password))
         driver.verify_connectivity()
-        print(f"✓ Connected to Neo4j at {uri}")
+        print(f"✓ Connected to Neo4j at {uri} (database: {self.neo4j_database})")
         return driver
 
     def _load_graph_schema(self) -> tuple:
@@ -81,7 +82,7 @@ class QueryGenerator:
         joins = []
         same_as = []
 
-        with self.driver.session() as session:
+        with self.driver.session(database=self.neo4j_database) as session:
             # 1. Fields with metadata
             for r in session.run(
                 """
