@@ -6,12 +6,12 @@ import json
 import os
 import re
 import httpx
-from typing import List, Union
+from typing import List, Optional, Union
 from openai import OpenAI
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
-from ataclass import (
+from dataclass import (
     QueryConfig,
     FilterCondition,
     FilterGroup,
@@ -50,10 +50,14 @@ class QueryGenerator:
 
         # Load schema from Neo4j graph (single session for all queries)
         self.driver = self._connect_neo4j()
-        modules, joins, same_as = self._load_graph_schema()
-        self.system_prompt = self._build_system_prompt(modules, joins, same_as)
+        try:
+            modules, joins, same_as = self._load_graph_schema()
+            self.system_prompt = self._build_system_prompt(modules, joins, same_as)
+        except Exception:
+            self.driver.close()
+            raise
 
-    def _get_env(self, key: str, default=None) -> str:
+    def _get_env(self, key: str, default=None) -> Optional[str]:
         """Get env var and strip quotes if present"""
         value = os.getenv(key, default)
         if value and isinstance(value, str):
@@ -152,6 +156,11 @@ class QueryGenerator:
                 )
 
         self._field_lookup = field_lookup
+        self._ds_set = {ds for ds, _ in field_lookup}
+        self._join_pairs = set()
+        for left_ds, left_f, right_ds, right_f in joins:
+            self._join_pairs.add((left_ds, left_f, right_ds, right_f))
+            self._join_pairs.add((right_ds, right_f, left_ds, left_f))
         return modules, joins, same_as
 
     def _build_system_prompt(
@@ -248,6 +257,17 @@ class QueryGenerator:
                     errors.append(
                         f"Invalid join field: '{join.right_field}' not found in '{join.right_data_source}'"
                     )
+                if (
+                    join.left_data_source,
+                    join.left_field,
+                    join.right_data_source,
+                    join.right_field,
+                ) not in self._join_pairs:
+                    errors.append(
+                        f"Invalid join: no JOINS_WITH relationship between "
+                        f"'{join.left_data_source}.{join.left_field}' and "
+                        f"'{join.right_data_source}.{join.right_field}'"
+                    )
 
         if query.aggregation:
             for agg_func in query.aggregation.functions:
@@ -257,6 +277,20 @@ class QueryGenerator:
                     errors.append(
                         f"Invalid aggregation field: '{agg_func.field_name}' not found in '{agg_func.dataSource}'"
                     )
+            if query.aggregation.having:
+                agg_aliases = {f.alias for f in query.aggregation.functions}
+                for having in query.aggregation.having:
+                    if having.aggregation_alias not in agg_aliases:
+                        errors.append(
+                            f"Invalid having clause: alias '{having.aggregation_alias}' "
+                            f"does not match any aggregation function"
+                        )
+
+        if query.subqueries:
+            for subquery in query.subqueries:
+                sub_errors = self.validate_query(subquery.query)
+                for err in sub_errors:
+                    errors.append(f"In subquery '{subquery.alias}': {err}")
 
         return errors
 
@@ -264,7 +298,7 @@ class QueryGenerator:
         return (data_source, field_name) in self._field_lookup
 
     def _data_source_exists(self, data_source: str) -> bool:
-        return any(ds == data_source for ds, _ in self._field_lookup)
+        return data_source in self._ds_set
 
     def _validate_filter_conditions(
         self, conditions: List[Union[FilterCondition, FilterGroup]]
@@ -320,7 +354,7 @@ class QueryGenerator:
                     model=self.model,
                     messages=messages,
                     temperature=0,
-                    max_tokens=1024,
+                    max_tokens=4096,
                 )
                 raw = response.choices[0].message.content
                 content = self._extract_json(raw)
@@ -362,16 +396,16 @@ class QueryGenerator:
                 )
             except (ValidationError, ValueError):
                 raise
-            except httpx.ConnectError as e:
-                raise RuntimeError(
-                    f"Connection error - unable to reach LLM endpoint: {e}"
-                )
-            except httpx.TimeoutException as e:
-                raise RuntimeError(f"Request timed out: {e}")
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                if attempt == 0:
+                    continue
+                raise RuntimeError(f"Network error after retry: {e}")
             except Exception as e:
                 raise RuntimeError(
                     f"Error generating query: {type(e).__name__}: {e}"
                 )
+
+        raise RuntimeError("Query generation failed after all retry attempts")
 
     def close(self):
         """Close the Neo4j driver"""
