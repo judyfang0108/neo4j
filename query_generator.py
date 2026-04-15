@@ -82,6 +82,7 @@ class QueryGenerator:
         Also populates self._field_lookup.
         """
         field_lookup = set()
+        field_meta = {}
         modules = {}
         joins = []
         same_as = []
@@ -94,12 +95,23 @@ class QueryGenerator:
                 RETURN m.moduleId AS moduleId, m.description AS moduleDesc,
                        f.dataSourceId AS dsId, f.dataSourceDescription AS dsDesc,
                        f.fieldId AS fieldId, f.description AS fieldDesc,
-                       f.type AS fieldType, f.enumOptions AS enumOptions
+                       f.type AS fieldType, f.enumOptions AS enumOptions,
+                       f.is_freeform AS isFreeform, f.example_data AS exampleData
                 ORDER BY moduleId, dsId, fieldId
                 """
             ):
                 mid, dsid = r["moduleId"], r["dsId"]
-                field_lookup.add((dsid, r["fieldId"]))
+                fid = r["fieldId"]
+                field_lookup.add((dsid, fid))
+
+                is_freeform = bool(r["isFreeform"])
+                enums = r["enumOptions"] or []
+                example_data = r["exampleData"] or []
+
+                field_meta[(dsid, fid)] = {
+                    "is_freeform": is_freeform,
+                    "enum_options": enums,
+                }
 
                 if mid not in modules:
                     modules[mid] = {"desc": r["moduleDesc"] or "", "dataSources": {}}
@@ -107,10 +119,8 @@ class QueryGenerator:
                 if dsid not in ds_map:
                     ds_map[dsid] = {"desc": r["dsDesc"] or "", "fields": []}
 
-                fid = r["fieldId"]
                 fdesc = r["fieldDesc"] or ""
                 ftype = r["fieldType"] or ""
-                enums = r["enumOptions"] or []
 
                 parts = []
                 if fdesc and fdesc != fid:
@@ -119,6 +129,10 @@ class QueryGenerator:
                     parts.append(ftype)
                 if enums:
                     parts.append("enum: " + "|".join(enums))
+                if is_freeform:
+                    parts.append("freeform")
+                    if example_data:
+                        parts.append("examples: " + ", ".join(str(e) for e in example_data[:3]))
                 label = f"{fid} ({', '.join(parts)})" if parts else fid
                 ds_map[dsid]["fields"].append(label)
 
@@ -156,6 +170,7 @@ class QueryGenerator:
                 )
 
         self._field_lookup = field_lookup
+        self._field_meta = field_meta
         self._ds_set = {ds for ds, _ in field_lookup}
         self._join_pairs = set()
         for left_ds, left_f, right_ds, right_f in joins:
@@ -306,12 +321,46 @@ class QueryGenerator:
         errors = []
         for condition in conditions:
             if isinstance(condition, FilterCondition):
-                if not self._is_valid_field(
-                    condition.dataSource, condition.field_name
-                ):
+                key = (condition.dataSource, condition.field_name)
+                if not self._is_valid_field(*key):
                     errors.append(
                         f"Invalid filter field: '{condition.field_name}' not found in '{condition.dataSource}'"
                     )
+                elif key in self._field_meta:
+                    meta = self._field_meta[key]
+                    op = condition.operator
+                    val = condition.value
+
+                    if not meta["is_freeform"]:
+                        # Non-freeform: no fuzzy matching allowed
+                        if op in ("LIKE", "NOT LIKE"):
+                            errors.append(
+                                f"Field '{condition.field_name}' in '{condition.dataSource}' is not freeform — "
+                                f"use exact match (=, IN) instead of {op}"
+                            )
+                        # Non-freeform with enums: value must be from enum set
+                        enum_opts = meta["enum_options"]
+                        if enum_opts and val is not None:
+                            allowed = set(enum_opts)
+                            if op == "=" and str(val) not in allowed:
+                                errors.append(
+                                    f"Invalid value '{val}' for '{condition.field_name}' — "
+                                    f"allowed values: {', '.join(enum_opts)}"
+                                )
+                            elif op in ("IN", "NOT IN") and isinstance(val, list):
+                                bad = [str(v) for v in val if str(v) not in allowed]
+                                if bad:
+                                    errors.append(
+                                        f"Invalid values {bad} for '{condition.field_name}' — "
+                                        f"allowed values: {', '.join(enum_opts)}"
+                                    )
+                    else:
+                        # Freeform: warn if using exact match (= is valid but LIKE is preferred)
+                        if op == "=" and val is not None and isinstance(val, str):
+                            errors.append(
+                                f"Field '{condition.field_name}' is freeform — "
+                                f"consider using LIKE with '%{val}%' for keyword matching instead of exact ="
+                            )
             elif isinstance(condition, FilterGroup):
                 errors.extend(
                     self._validate_filter_conditions(condition.conditions)

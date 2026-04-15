@@ -6,11 +6,16 @@ from typing import List, Optional, Literal, Union, Dict, Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+# Date part extraction functions applicable to date/datetime fields
+DateFunction = Literal["YEAR", "MONTH", "DAY"]
+
+
 class CalculatedField(BaseModel):
     """A calculated field with an expression - supports cross-data source expressions"""
 
     alias: str
     expression: str
+    show: bool = True  # Whether to include in output
     dataSources: List[str] = Field(
         alias="dataSources"
     )  # Support multiple data sources for cross-data source expressions
@@ -39,6 +44,8 @@ class FieldConfig(BaseModel):
     field_name: str
     dataSource: str
     alias: Optional[str] = None  # For aliasing in output
+    show: bool = True  # Whether to include in output (SELECT) vs only use for filtering/joining
+    function: Optional[DateFunction] = None  # e.g. YEAR(HireDate) → "function": "YEAR"
 
 
 class FilterCondition(BaseModel):
@@ -47,6 +54,7 @@ class FilterCondition(BaseModel):
     logicType: Literal["CONDITION"] = "CONDITION"
     field_name: str
     dataSource: str
+    function: Optional[DateFunction] = None  # e.g. WHERE YEAR(PayDate) = 2025
     operator: Literal[
         "=",
         "!=",
@@ -128,7 +136,9 @@ class AggregationFunction(BaseModel):
     alias: str  # Output alias like "TotalAmount", "EmployeeCount"
     field_name: str
     dataSource: str
+    function: Optional[DateFunction] = None  # e.g. COUNT_DISTINCT(YEAR(HireDate))
     operator: Literal["SUM", "COUNT", "AVG", "MAX", "MIN", "COUNT_DISTINCT"]
+    show: bool = True  # Whether to include in output
 
 
 class HavingCondition(BaseModel):
@@ -140,19 +150,22 @@ class HavingCondition(BaseModel):
     value_end: Optional[Union[str, int, float]] = None
 
 
+class GroupByField(BaseModel):
+    """A field to group by, with optional date function"""
+
+    field: str
+    function: Optional[DateFunction] = None  # e.g. GROUP BY YEAR(HireDate)
+
+
 class Aggregation(BaseModel):
-    """Aggregation configuration (supports multiple aggregations)"""
+    """Aggregation configuration (GROUP BY + aggregate functions + HAVING)"""
 
     # Multiple aggregation functions
     functions: List[AggregationFunction]
     # Group by fields
-    group_by: List[str]
-    # Order by (can reference aggregation aliases)
-    order_by: Optional[List[OrderBy]] = None
+    group_by: List[GroupByField]
     # HAVING conditions (post-aggregation filters)
     having: Optional[List[HavingCondition]] = None
-    # Limit results
-    limit: Optional[int] = None
 
 
 class Subquery(BaseModel):
@@ -160,6 +173,7 @@ class Subquery(BaseModel):
 
     alias: str
     query: "QueryConfig"  # Recursive reference to QueryConfig
+    show: bool = True  # Whether to include subquery result in output
 
 
 class QueryConfig(BaseModel):
@@ -177,6 +191,11 @@ class QueryConfig(BaseModel):
     aggregation: Optional[Aggregation] = None
     # Subqueries
     subqueries: Optional[List[Subquery]] = None
+    # Ordering (works with or without aggregation)
+    order_by: Optional[List[OrderBy]] = None
+    # Pagination
+    limit: Optional[int] = None
+    offset: Optional[int] = None
     # Distinct results
     distinct: bool = False
 
