@@ -55,7 +55,7 @@ Responses to the feedback on the QueryConfig design. Each answer notes whether t
 | `fields` | `field_name` + `dataSource` (alias is output label) |
 | `filters` | `field_name` + `dataSource` |
 | `joins` | `left_field` / `right_field` + data source |
-| `group_by` | `field` (field name) |
+| `group_by` | `field` + `dataSource` (optional, for disambiguation) |
 | `order_by` | `field` (can use alias OR field name) |
 | `having` | `aggregation_alias` (references aggregation function alias) |
 
@@ -65,32 +65,20 @@ Responses to the feedback on the QueryConfig design. Each answer notes whether t
 
 ---
 
-### Q3. Field ambiguity in group_by
+### Q3. Field ambiguity in group_by — FIXED
 
 > If we select EmployeeCode from two different data sources, join them, but do not alias — group_by takes a simple string, so it could be ambiguous.
 
-**This is a real gap.** Currently `GroupByField` is:
-
-```python
-class GroupByField(BaseModel):
-    field: str                          # just the field name
-    function: Optional[DateFunction]    # YEAR, MONTH, DAY
-```
-
-If both `EmpInfo.EmployeeCode` and `Checks.EmployeeCode` exist, `{"field": "EmployeeCode"}` is ambiguous.
-
-**Fix:** Add `dataSource` to `GroupByField`:
+**Fixed.** `GroupByField` now has an optional `dataSource` field:
 
 ```python
 class GroupByField(BaseModel):
     field: str
-    dataSource: Optional[str] = None    # disambiguate when needed
+    dataSource: Optional[str] = None    # required when field name exists in multiple data sources
     function: Optional[DateFunction] = None
 ```
 
-Optional so it doesn't break simple cases where the field name is unique. The validator can enforce it when the field name exists in multiple data sources used in the query.
-
-**Recommendation: Fix this.** It's a small change and prevents a real ambiguity bug.
+The validator in `query_generator.py` enforces disambiguation: if a `group_by` field name exists in multiple data sources used in the query and `dataSource` is not provided, validation returns an error asking to add `dataSource`. All prompt examples and reference docs have been updated to include `dataSource` on `group_by` entries.
 
 ---
 
@@ -270,47 +258,21 @@ The expression uses `Gross.Amount` and `Deductions.Amount` — the original `dat
 
 ---
 
-### QC1. Required filters
+### QC1. Required filters — FIXED
 
 > CRS has a concept of "required" filters in some data sources due to data size. Should we separate required from optional filters?
 
-**Current model does not distinguish required vs. optional filters.** All filters go in the same `filters` block.
+**Fixed. Used Option A — required filters are stored in the graph and enforced by validation.** No changes to the QueryConfig format.
 
-**Two approaches:**
+How it works:
 
-**Option A: Encode required filters in the schema metadata**
+1. **Graph**: The `required` property already existed on Field nodes in Neo4j (from `schema.json` filterTypes). The query generator now reads `f.required` and `f.filterType` when loading the schema.
 
-Add `required_filters` to the Neo4j graph at the data source level. The query generator validates that required filters are present:
+2. **Prompt**: When any data source has required filters, they appear in a "Required Filters" section in the schema summary shown to the LLM. For date-range filter types, a hint is added: `(use BETWEEN for date range)`. The LLM is instructed (rule 12) that it MUST include these filters.
 
-```
-Module → DataSource (required_filters: ["PayDate BETWEEN"])
-                   → Fields
-```
+3. **Validation**: `validate_query` collects all data sources used in the query, then checks each against `_required_filters`. If a required filter field is not present in the query's filter conditions, validation fails with: `"Data source 'X' requires a filter on 'Y'"`. The LLM self-correction loop then retries with the error feedback.
 
-The validator checks: "if data source X is used, at least one filter on field Y with operator BETWEEN must exist." This keeps the QueryConfig format unchanged — required and optional filters look the same in the JSON — but validation enforces the rule.
-
-**Option B: Separate required_filters in QueryConfig**
-
-```json
-{
-  "required_filters": {
-    "conditions": [
-      {"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "Payroll", "operator": "BETWEEN", "value": "2025-01-01", "value_end": "2025-12-31"}
-    ]
-  },
-  "filters": {
-    "conditions": [...]
-  }
-}
-```
-
-**Recommendation: Option A.** Don't change the QueryConfig format. Instead:
-
-1. Store required filter rules in the schema/Neo4j graph (which data sources need which filters)
-2. Add a validation step in `validate_query` that checks required filters are present
-3. Update the prompt to tell the LLM: "Data source X requires a filter on field Y"
-
-This way the LLM naturally includes the required filter as part of the AND conditions, and the validator catches it if missing. The demo's assumption (top-level AND with a required filter condition) is correct and doesn't need a special structure.
+The QueryConfig format is unchanged — required and optional filters both go in the same `filters` block as regular conditions. The demo's approach (top-level AND with a required filter condition) is correct.
 
 ---
 
@@ -355,33 +317,38 @@ Maps to: `X JOIN Y ON X.EmpCode = Y.EmpCode AND X.PayPeriod = Y.PayPeriod`
 
 ---
 
-### QE1. Group-by field ambiguity
+### QE1. Group-by field ambiguity — FIXED (same as Q3)
 
 > Are we going to guarantee that all group by fields are from unique fields?
 
-**No guarantee currently.** This is the same issue as Q3. If `EmployeeCode` exists in both `EmpInfo` and `Checks`, `{"field": "EmployeeCode"}` is ambiguous.
-
-**Fix: Same as Q3** — add optional `dataSource` to `GroupByField`:
-
-```python
-class GroupByField(BaseModel):
-    field: str
-    dataSource: Optional[str] = None
-    function: Optional[DateFunction] = None
-```
-
-The validator should enforce `dataSource` when the field name is ambiguous (exists in multiple data sources used in the query).
+**Fixed.** Same fix as Q3 — `GroupByField` now has optional `dataSource`. The validator catches ambiguity when a field name exists in multiple data sources and `dataSource` is not specified.
 
 ---
 
 ## Summary: What Needs Action
 
-| Item | Priority | Change Type |
-|---|---|---|
-| Q3/QE1: Add `dataSource` to `GroupByField` | **High** | Model change |
-| QC1: Required filter validation | **High** | Schema + validation |
-| QB1: Document expression format rule | **Medium** | Documentation only |
-| QD1: Composite join keys | **Medium** | Model change (if needed) |
-| Q1: Self-join aliases | **Low** | Model change (defer) |
-| Q5: Expanded function library | **Low** | Future design (defer) |
-| QA2: Alias usage by frontend | **Low** | Integration decision |
+| Item | Priority | Change Type | Resolved by |
+|---|---|---|---|
+| Q3/QE1: Add `dataSource` to `GroupByField` | ~~High~~ | **FIXED** | — |
+| QC1: Required filter validation | ~~High~~ | **FIXED** | — |
+| QB1: Document expression format rule | **Medium** | Documentation only | — |
+| QD1: Composite join keys | **Medium** | Model change (if needed) | Future: Composite join keys |
+| Q1: Self-join aliases | **Low** | Model change (defer) | Future: Self-joins |
+| Q5: Expanded function library | **Low** | Future design (defer) | Future: String functions |
+| QA2: Alias usage by frontend | **Low** | Integration decision | — |
+
+---
+
+## Future Plan
+
+Not covered in the current MVP but potential additions for later:
+
+| Feature | Description | Addresses | When to add |
+|---|---|---|---|
+| Self-joins | Join a data source with itself (e.g., employee-to-manager hierarchy). Requires data-source-level aliasing on `JoinConfig`. | Q1 | When a concrete use case comes up in CRS data |
+| Composite join keys | Multiple fields in a single join (`ON X.A = Y.A AND X.B = Y.B`). Change `left_field`/`right_field` to lists. | QD1 | When any JOINS_WITH relationship in the graph actually needs multi-field keys |
+| UNION | Combine results from multiple queries. Would need a wrapper model above `QueryConfig`. | — | When users need to merge results from unrelated data sources |
+| Window functions | `RANK()`, `ROW_NUMBER()`, `LEAD()`, `LAG()`, etc. Would need a new `WindowFunction` model. | — | When ranking or row-numbering becomes a common reporting need |
+| Subqueries in WHERE | `WHERE salary > (SELECT AVG(salary) FROM ...)`. Would need filter conditions to accept subquery references. | — | When comparison-to-aggregate queries become frequent |
+| CASE WHEN | Conditional expressions in SELECT (`CASE WHEN tenure > 5 THEN 'Senior' ELSE 'Junior' END`). Could be handled via `calculated_fields` expressions. | — | When conditional categorization is needed in reports |
+| String functions | `UPPER()`, `LOWER()`, `CONCAT()`, `TRIM()`, etc. Expand `function` type or use `calculated_fields`. | Q5 | When CRS releases its full function library (see Q5) |

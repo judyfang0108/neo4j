@@ -42,7 +42,9 @@ SELECT EmpInfo.EmployeeName
 SELECT EmpInfo.EmployeeName AS FullName
 ```
 
-### Field with date function
+### Field with date function (date fields only)
+
+`function` (YEAR, MONTH, DAY) can only be applied to fields with type `date`. Using it on `string`, `decimal`, or `enum` fields will fail validation.
 
 ```json
 {"field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "alias": "HireYear"}
@@ -368,14 +370,46 @@ Aggregation functions are always included in the output (they are separate SELEC
 
 ### All aggregation operators
 
-| Operator | JSON | SQL |
+| Operator | JSON | SQL | Type constraint |
+|---|---|---|---|
+| `SUM` | `"operator": "SUM"` | `SUM(field)` | Numeric only |
+| `COUNT` | `"operator": "COUNT"` | `COUNT(field)` or `COUNT(*)` | Any (supports `field_name: "*"`) |
+| `AVG` | `"operator": "AVG"` | `AVG(field)` | Numeric only |
+| `MAX` | `"operator": "MAX"` | `MAX(field)` | Any |
+| `MIN` | `"operator": "MIN"` | `MIN(field)` | Any |
+| `COUNT_DISTINCT` | `"operator": "COUNT_DISTINCT"` | `COUNT(DISTINCT field)` | Any |
+
+### COUNT(*) — count all rows
+
+```json
+{
+  "aggregation": {
+    "functions": [
+      {"alias": "TotalRows", "field_name": "*", "dataSource": "EmpInfo", "operator": "COUNT"}
+    ],
+    "group_by": [{"field": "DeptCode", "dataSource": "EmpInfo"}]
+  }
+}
+```
+
+```sql
+SELECT DeptCode, COUNT(*) AS TotalRows
+FROM EmpInfo
+GROUP BY DeptCode
+```
+
+`field_name: "*"` is only valid with `COUNT`. SUM/AVG/MAX/MIN require a specific field.
+
+### Type validation rules
+
+The system validates field types at query generation time:
+
+| Operation | Allowed field types | Rejected field types |
 |---|---|---|
-| `SUM` | `"operator": "SUM"` | `SUM(field)` |
-| `COUNT` | `"operator": "COUNT"` | `COUNT(field)` |
-| `AVG` | `"operator": "AVG"` | `AVG(field)` |
-| `MAX` | `"operator": "MAX"` | `MAX(field)` |
-| `MIN` | `"operator": "MIN"` | `MIN(field)` |
-| `COUNT_DISTINCT` | `"operator": "COUNT_DISTINCT"` | `COUNT(DISTINCT field)` |
+| `SUM`, `AVG` | `decimal`, `int`, `float`, `number` | `string`, `date`, `enum` |
+| `YEAR`, `MONTH`, `DAY` (function) | `date` | `string`, `decimal`, `enum` |
+| `COUNT`, `COUNT_DISTINCT`, `MAX`, `MIN` | any | — |
+| `COUNT(*)` | n/a (no field) | — |
 
 ### Basic aggregation
 
@@ -385,7 +419,7 @@ Aggregation functions are always included in the output (they are separate SELEC
     "functions": [
       {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
-    "group_by": [{"field": "DeptCode"}]
+    "group_by": [{"field": "DeptCode", "dataSource": "Checks"}]
   }
 }
 ```
@@ -406,7 +440,7 @@ GROUP BY DeptCode
       {"alias": "AvgAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "AVG"},
       {"alias": "EmpCount", "field_name": "EmpCode", "dataSource": "Checks", "operator": "COUNT_DISTINCT"}
     ],
-    "group_by": [{"field": "DeptCode"}]
+    "group_by": [{"field": "DeptCode", "dataSource": "Checks"}]
   }
 }
 ```
@@ -428,7 +462,7 @@ GROUP BY DeptCode
     "functions": [
       {"alias": "HireCount", "field_name": "EmpCode", "dataSource": "EmpInfo", "operator": "COUNT"}
     ],
-    "group_by": [{"field": "HireDate", "function": "YEAR"}]
+    "group_by": [{"field": "HireDate", "dataSource": "EmpInfo", "function": "YEAR"}]
   }
 }
 ```
@@ -454,9 +488,9 @@ COUNT(DISTINCT YEAR(EmpInfo.HireDate)) AS UniqueYears
 ```json
 {
   "group_by": [
-    {"field": "DeptCode"},
-    {"field": "HireDate", "function": "YEAR"},
-    {"field": "HireDate", "function": "MONTH"}
+    {"field": "DeptCode", "dataSource": "EmpInfo"},
+    {"field": "HireDate", "dataSource": "EmpInfo", "function": "YEAR"},
+    {"field": "HireDate", "dataSource": "EmpInfo", "function": "MONTH"}
   ]
 }
 ```
@@ -473,7 +507,7 @@ GROUP BY DeptCode, YEAR(HireDate), MONTH(HireDate)
     "functions": [
       {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
-    "group_by": [{"field": "EmpCode"}],
+    "group_by": [{"field": "EmpCode", "dataSource": "Checks"}],
     "having": [{"aggregation_alias": "TotalAmount", "operator": ">", "value": 5000}]
   }
 }
@@ -555,7 +589,7 @@ ORDER BY EmpName ASC
 {
   "aggregation": {
     "functions": [{"alias": "Total", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}],
-    "group_by": [{"field": "EmpCode"}]
+    "group_by": [{"field": "EmpCode", "dataSource": "Checks"}]
   },
   "order_by": [{"field": "Total", "direction": "DESC"}]
 }
@@ -639,7 +673,7 @@ LIMIT 10 OFFSET 20
 {
   "aggregation": {
     "functions": [{"alias": "Total", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}],
-    "group_by": [{"field": "DeptCode"}]
+    "group_by": [{"field": "DeptCode", "dataSource": "Checks"}]
   },
   "order_by": [{"field": "Total", "direction": "DESC"}],
   "limit": 10,
@@ -822,7 +856,7 @@ WHERE EmpInfo.Status = 'Active'
     "functions": [
       {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
-    "group_by": [{"field": "DeptCode"}]
+    "group_by": [{"field": "DeptCode", "dataSource": "Checks"}]
   }
 }
 ```
@@ -850,7 +884,7 @@ GROUP BY DeptCode
     "functions": [
       {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
-    "group_by": [{"field": "DeptCode"}]
+    "group_by": [{"field": "DeptCode", "dataSource": "Checks"}]
   }
 }
 ```
@@ -882,7 +916,7 @@ GROUP BY DeptCode
     "functions": [
       {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
-    "group_by": [{"field": "EmpName"}]
+    "group_by": [{"field": "EmpName", "dataSource": "EmpInfo"}]
   },
   "order_by": [{"field": "TotalAmount", "direction": "DESC"}],
   "limit": 10
@@ -914,7 +948,7 @@ Note: `DeptCode` is used for filtering only — it does NOT appear in `fields`.
       {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"},
       {"alias": "EmpCount", "field_name": "EmpCode", "dataSource": "Checks", "operator": "COUNT_DISTINCT"}
     ],
-    "group_by": [{"field": "DeptCode"}],
+    "group_by": [{"field": "DeptCode", "dataSource": "Checks"}],
     "having": [
       {"aggregation_alias": "TotalAmount", "operator": ">", "value": 50000},
       {"aggregation_alias": "EmpCount", "operator": ">=", "value": 5}
@@ -951,7 +985,7 @@ ORDER BY TotalAmount DESC
     "functions": [
       {"alias": "HireCount", "field_name": "EmpCode", "dataSource": "EmpInfo", "operator": "COUNT"}
     ],
-    "group_by": [{"field": "HireDate", "function": "YEAR"}]
+    "group_by": [{"field": "HireDate", "dataSource": "EmpInfo", "function": "YEAR"}]
   },
   "order_by": [{"field": "HireYear", "direction": "ASC"}]
 }
@@ -1104,8 +1138,8 @@ WHERE EmpInfo.EmpName LIKE '%smith%'
       {"alias": "CheckCount", "field_name": "Amount", "dataSource": "Checks", "operator": "COUNT"}
     ],
     "group_by": [
-      {"field": "EmpName"},
-      {"field": "HireDate", "function": "YEAR"}
+      {"field": "EmpName", "dataSource": "EmpInfo"},
+      {"field": "HireDate", "dataSource": "EmpInfo", "function": "YEAR"}
     ],
     "having": [
       {"aggregation_alias": "TotalExpenses", "operator": ">", "value": 10000},
@@ -1154,7 +1188,38 @@ LIMIT 20
 
 Note: `Status` and `DeptCode` are used for filtering only — they do NOT appear in `fields`.
 
-### Pattern 15: Empty query (cannot be built)
+### Pattern 15: COUNT(*) with filters
+
+```json
+{
+  "fields": [
+    {"field_name": "DeptCode", "dataSource": "EmpInfo"}
+  ],
+  "filters": {
+    "conditions": [
+      {"logicType": "CONDITION", "field_name": "Status", "dataSource": "EmpInfo", "operator": "=", "value": "Active"}
+    ]
+  },
+  "aggregation": {
+    "functions": [
+      {"alias": "HeadCount", "field_name": "*", "dataSource": "EmpInfo", "operator": "COUNT"}
+    ],
+    "group_by": [{"field": "DeptCode", "dataSource": "EmpInfo"}]
+  },
+  "order_by": [{"field": "HeadCount", "direction": "DESC"}]
+}
+```
+
+```sql
+SELECT EmpInfo.DeptCode,
+       COUNT(*) AS HeadCount
+FROM EmpInfo
+WHERE EmpInfo.Status = 'Active'
+GROUP BY DeptCode
+ORDER BY HeadCount DESC
+```
+
+### Pattern 16: Empty query (cannot be built)
 
 ```json
 {}
@@ -1171,16 +1236,17 @@ Note: `Status` and `DeptCode` are used for filtering only — they do NOT appear
 | QueryConfig field | SQL clause | Output column? |
 |---|---|---|
 | `fields` | `SELECT col` | Yes — always |
-| `fields` + `function` | `SELECT YEAR/MONTH/DAY(col)` | Yes — always |
+| `fields` + `function` | `SELECT YEAR/MONTH/DAY(col)` | Yes — always (date fields only) |
 | `calculated_fields` | `SELECT (expr) AS alias` | Yes — always |
 | `filters.conditions` | `WHERE ...` | No |
-| `filters.conditions` + `function` | `WHERE YEAR/MONTH/DAY(col) ...` | No |
+| `filters.conditions` + `function` | `WHERE YEAR/MONTH/DAY(col) ...` | No (date fields only) |
 | `filters` nested groups | `WHERE (... AND/OR ...)` | No |
 | `joins` | `[INNER\|LEFT\|RIGHT\|FULL\|CROSS] JOIN ... ON ...` | No |
 | `aggregation.functions` | `SELECT AGG(col) AS alias` | Yes — always |
-| `aggregation.functions` + `function` | `SELECT AGG(YEAR/MONTH/DAY(col))` | Yes — always |
-| `aggregation.group_by` | `GROUP BY col` | No |
-| `aggregation.group_by` + `function` | `GROUP BY YEAR/MONTH/DAY(col)` | No |
+| `aggregation.functions` (field_name: `*`) | `SELECT COUNT(*) AS alias` | Yes — always |
+| `aggregation.functions` + `function` | `SELECT AGG(YEAR/MONTH/DAY(col))` | Yes — always (date fields only) |
+| `aggregation.group_by` | `GROUP BY dataSource.col` | No |
+| `aggregation.group_by` + `function` | `GROUP BY YEAR/MONTH/DAY(dataSource.col)` | No |
 | `aggregation.having` | `HAVING AGG(col) op value` | No |
 | `order_by` | `ORDER BY col [ASC\|DESC] [NULLS FIRST\|LAST]` | No |
 | `limit` | `LIMIT N` | No |

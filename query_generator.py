@@ -83,6 +83,7 @@ class QueryGenerator:
         """
         field_lookup = set()
         field_meta = {}
+        required_filters = {}  # {dataSource: [(fieldId, filterType), ...]}
         modules = {}
         joins = []
         same_as = []
@@ -96,7 +97,8 @@ class QueryGenerator:
                        f.dataSourceId AS dsId, f.dataSourceDescription AS dsDesc,
                        f.fieldId AS fieldId, f.description AS fieldDesc,
                        f.type AS fieldType, f.enumOptions AS enumOptions,
-                       f.is_freeform AS isFreeform, f.example_data AS exampleData
+                       f.is_freeform AS isFreeform, f.example_data AS exampleData,
+                       f.required AS required, f.filterType AS filterType
                 ORDER BY moduleId, dsId, fieldId
                 """
             ):
@@ -108,10 +110,19 @@ class QueryGenerator:
                 enums = r["enumOptions"] or []
                 example_data = r["exampleData"] or []
 
+                field_type = (r["fieldType"] or "").lower()
+
                 field_meta[(dsid, fid)] = {
                     "is_freeform": is_freeform,
                     "enum_options": enums,
+                    "type": field_type,
                 }
+
+                if bool(r["required"]):
+                    filter_type = r["filterType"] or ""
+                    if dsid not in required_filters:
+                        required_filters[dsid] = []
+                    required_filters[dsid].append((fid, filter_type))
 
                 if mid not in modules:
                     modules[mid] = {"desc": r["moduleDesc"] or "", "dataSources": {}}
@@ -171,6 +182,7 @@ class QueryGenerator:
 
         self._field_lookup = field_lookup
         self._field_meta = field_meta
+        self._required_filters = required_filters
         self._ds_set = {ds for ds, _ in field_lookup}
         self._join_pairs = set()
         for left_ds, left_f, right_ds, right_f in joins:
@@ -223,6 +235,18 @@ class QueryGenerator:
             for ds in sorted(unjoinable):
                 schema_summary.append(f"  - {ds}")
 
+        if self._required_filters:
+            schema_summary.append("\n## Required Filters")
+            schema_summary.append(
+                "These data sources REQUIRE specific filters when queried (due to large data volume):"
+            )
+            for ds, fields in sorted(self._required_filters.items()):
+                for fid, ftype in fields:
+                    hint = f" (use BETWEEN for date range)" if "Date" in ftype else ""
+                    schema_summary.append(
+                        f"  - {ds} requires filter on: {fid}{hint}"
+                    )
+
         if same_as:
             schema_summary.append(
                 "\n## Equivalent Fields Across Modules (SAME_AS)"
@@ -246,6 +270,10 @@ class QueryGenerator:
                     errors.append(
                         f"Invalid field: '{field.field_name}' not found in data source '{field.dataSource}'"
                     )
+                elif field.function:
+                    errors.extend(self._validate_date_function(
+                        field.dataSource, field.field_name, field.function
+                    ))
 
         if query.calculated_fields:
             for calc_field in query.calculated_fields:
@@ -286,12 +314,60 @@ class QueryGenerator:
 
         if query.aggregation:
             for agg_func in query.aggregation.functions:
-                if not self._is_valid_field(
+                if agg_func.field_name == "*":
+                    # COUNT(*) — just validate the data source exists
+                    if not self._data_source_exists(agg_func.dataSource):
+                        errors.append(
+                            f"Invalid data source for COUNT(*): '{agg_func.dataSource}'"
+                        )
+                elif not self._is_valid_field(
                     agg_func.dataSource, agg_func.field_name
                 ):
                     errors.append(
                         f"Invalid aggregation field: '{agg_func.field_name}' not found in '{agg_func.dataSource}'"
                     )
+                else:
+                    if agg_func.function:
+                        errors.extend(self._validate_date_function(
+                            agg_func.dataSource, agg_func.field_name, agg_func.function
+                        ))
+                    if agg_func.operator in ("SUM", "AVG") and agg_func.field_name != "*":
+                        errors.extend(self._validate_numeric_field(
+                            agg_func.dataSource, agg_func.field_name, agg_func.operator
+                        ))
+            # Collect all data sources used in the query for ambiguity checks
+            query_ds = set()
+            if query.fields:
+                query_ds.update(f.dataSource for f in query.fields)
+            if query.joins:
+                for j in query.joins:
+                    query_ds.add(j.left_data_source)
+                    query_ds.add(j.right_data_source)
+            for gb in query.aggregation.group_by:
+                if gb.dataSource:
+                    if not self._data_source_exists(gb.dataSource):
+                        errors.append(
+                            f"Invalid group_by data source: '{gb.dataSource}'"
+                        )
+                    elif not self._is_valid_field(gb.dataSource, gb.field):
+                        errors.append(
+                            f"Invalid group_by field: '{gb.field}' not found in '{gb.dataSource}'"
+                        )
+                else:
+                    # No dataSource — check for ambiguity
+                    matching_ds = [
+                        ds for ds in query_ds
+                        if (ds, gb.field) in self._field_lookup
+                    ]
+                    if len(matching_ds) == 0:
+                        errors.append(
+                            f"Invalid group_by field: '{gb.field}' not found in any data source"
+                        )
+                    elif len(matching_ds) > 1:
+                        errors.append(
+                            f"Ambiguous group_by field: '{gb.field}' exists in multiple data sources "
+                            f"({', '.join(matching_ds)}). Add 'dataSource' to disambiguate."
+                        )
             if query.aggregation.having:
                 agg_aliases = {f.alias for f in query.aggregation.functions}
                 for having in query.aggregation.having:
@@ -307,13 +383,80 @@ class QueryGenerator:
                 for err in sub_errors:
                     errors.append(f"In subquery '{subquery.alias}': {err}")
 
+        # Check required filters for all data sources used in the query
+        used_ds = set()
+        if query.fields:
+            used_ds.update(f.dataSource for f in query.fields)
+        if query.calculated_fields:
+            for cf in query.calculated_fields:
+                used_ds.update(cf.dataSources)
+        if query.joins:
+            for j in query.joins:
+                used_ds.add(j.left_data_source)
+                used_ds.add(j.right_data_source)
+        if query.aggregation:
+            for af in query.aggregation.functions:
+                used_ds.add(af.dataSource)
+
+        # Collect all filtered fields from the query
+        filtered_fields = set()
+        if query.filters and query.filters.conditions:
+            self._collect_filtered_fields(query.filters.conditions, filtered_fields)
+
+        for ds in used_ds:
+            if ds in self._required_filters:
+                for fid, ftype in self._required_filters[ds]:
+                    if (ds, fid) not in filtered_fields:
+                        errors.append(
+                            f"Data source '{ds}' requires a filter on '{fid}'"
+                        )
+
         return errors
+
+    @staticmethod
+    def _collect_filtered_fields(
+        conditions: List[Union[FilterCondition, FilterGroup]], result: set
+    ):
+        """Recursively collect all (dataSource, field_name) pairs from filter conditions."""
+        for condition in conditions:
+            if isinstance(condition, FilterCondition):
+                result.add((condition.dataSource, condition.field_name))
+            elif isinstance(condition, FilterGroup):
+                QueryGenerator._collect_filtered_fields(condition.conditions, result)
 
     def _is_valid_field(self, data_source: str, field_name: str) -> bool:
         return (data_source, field_name) in self._field_lookup
 
     def _data_source_exists(self, data_source: str) -> bool:
         return data_source in self._ds_set
+
+    def _validate_date_function(
+        self, data_source: str, field_name: str, function: str
+    ) -> List[str]:
+        """Check that a date function (YEAR/MONTH/DAY) is applied to a date field."""
+        key = (data_source, field_name)
+        if key in self._field_meta:
+            ftype = self._field_meta[key]["type"]
+            if ftype and ftype != "date":
+                return [
+                    f"Cannot apply {function} to '{field_name}' in '{data_source}' — "
+                    f"field type is '{ftype}', expected 'date'"
+                ]
+        return []
+
+    def _validate_numeric_field(
+        self, data_source: str, field_name: str, operator: str
+    ) -> List[str]:
+        """Check that SUM/AVG is applied to a numeric field."""
+        key = (data_source, field_name)
+        if key in self._field_meta:
+            ftype = self._field_meta[key]["type"]
+            if ftype and ftype not in ("decimal", "int", "integer", "number", "float"):
+                return [
+                    f"Cannot apply {operator} to '{field_name}' in '{data_source}' — "
+                    f"field type is '{ftype}', expected numeric"
+                ]
+        return []
 
     def _validate_filter_conditions(
         self, conditions: List[Union[FilterCondition, FilterGroup]]
@@ -330,6 +473,11 @@ class QueryGenerator:
                     meta = self._field_meta[key]
                     op = condition.operator
                     val = condition.value
+
+                    if condition.function:
+                        errors.extend(self._validate_date_function(
+                            condition.dataSource, condition.field_name, condition.function
+                        ))
 
                     if not meta["is_freeform"]:
                         # Non-freeform: no fuzzy matching allowed

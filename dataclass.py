@@ -132,10 +132,17 @@ class AggregationFunction(BaseModel):
     """A single aggregation function (for multiple aggregations)"""
 
     alias: str  # Output alias like "TotalAmount", "EmployeeCount"
-    field_name: str
+    field_name: str  # Use "*" with COUNT for COUNT(*)
     dataSource: str
     function: Optional[DateFunction] = None  # e.g. COUNT_DISTINCT(YEAR(HireDate))
     operator: Literal["SUM", "COUNT", "AVG", "MAX", "MIN", "COUNT_DISTINCT"]
+
+    @model_validator(mode="after")
+    def validate_count_star(self):
+        """Only COUNT supports field_name '*'"""
+        if self.field_name == "*" and self.operator != "COUNT":
+            raise ValueError("field_name '*' is only valid with COUNT operator")
+        return self
 
 
 class HavingCondition(BaseModel):
@@ -151,6 +158,7 @@ class GroupByField(BaseModel):
     """A field to group by, with optional date function"""
 
     field: str
+    dataSource: Optional[str] = None  # required when field name exists in multiple data sources
     function: Optional[DateFunction] = None  # e.g. GROUP BY YEAR(HireDate)
 
 

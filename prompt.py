@@ -33,8 +33,8 @@ def build_system_prompt(schema_summary_text: str) -> str:
   }},
   "joins": [{{"left_data_source": "...", "right_data_source": "...", "left_field": "...", "right_field": "...", "join_type": "INNER|LEFT|RIGHT|FULL|CROSS"}}],
   "aggregation": {{
-    "functions": [{{"alias": "...", "field_name": "...", "dataSource": "...", "function": "YEAR|MONTH|DAY", "operator": "SUM|COUNT|AVG|MAX|MIN|COUNT_DISTINCT"}}],
-    "group_by": [{{"field": "...", "function": "YEAR|MONTH|DAY"}}],
+    "functions": [{{"alias": "...", "field_name": "...|*", "dataSource": "...", "function": "YEAR|MONTH|DAY", "operator": "SUM|COUNT|AVG|MAX|MIN|COUNT_DISTINCT"}}],
+    "group_by": [{{"field": "...", "dataSource": "...", "function": "YEAR|MONTH|DAY"}}],
     "having": [{{"aggregation_alias": "...", "operator": "...", "value": ..., "value_end": ...}}]
   }},
   "subqueries": [{{"alias": "...", "query": {{...}}}}],
@@ -67,7 +67,11 @@ def build_system_prompt(schema_summary_text: str) -> str:
    - Supported on: `fields`, `filters.conditions`, `aggregation.functions`, and `aggregation.group_by`.
    - When `function` is set, the value compared against is the extracted part (an integer), not a date string. e.g. `"function": "YEAR", "operator": "=", "value": 2025`.
    - Omit `function` when not needed — only use it for date-part logic. For full date ranges, prefer BETWEEN without `function`.
-   - `group_by` entries are objects: `{{"field": "...", "function": "YEAR"}}`. Omit `function` for plain grouping: `{{"field": "..."}}`.
+   - `group_by` entries are objects: `{{"field": "...", "dataSource": "...", "function": "YEAR"}}`. Include `dataSource` to disambiguate when the same field name exists in multiple data sources. Omit `function` for plain grouping.
+12. Some data sources have **required filters** (listed under "Required Filters" in the schema). When using these data sources, you MUST include the required filter in your `filters` conditions. Typically these are date-range filters using BETWEEN.
+13. For COUNT of all rows, use `"field_name": "*"` with `"operator": "COUNT"`. Only COUNT supports `"*"`.
+   - `SUM` and `AVG` require numeric fields (decimal, int). Do NOT use them on string or date fields.
+   - `YEAR`, `MONTH`, `DAY` functions only apply to date fields. Do NOT use them on string or numeric fields.
 
 ## Examples
 
@@ -76,7 +80,7 @@ Q: "Who has unfinished surveys?"
 
 Q: "Who in dev department has the highest expenses in Dec 2025?"
 (DepartmentCode is used for filtering only — NOT in fields. TotalAmount comes from aggregation.)
-{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeChecksRecords"}}, {{"field_name": "EmployeeName", "dataSource": "EmployeeChecksRecords"}}], "filters": {{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "DepartmentCode", "dataSource": "EmployeeChecksRecords", "operator": "=", "value": "dev"}}, {{"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "EmployeeChecksRecords", "function": "YEAR", "operator": "=", "value": 2025}}, {{"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "EmployeeChecksRecords", "function": "MONTH", "operator": "=", "value": 12}}]}}, "aggregation": {{"functions": [{{"alias": "TotalAmount", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": "SUM"}}], "group_by": [{{"field": "EmployeeCode"}}, {{"field": "EmployeeName"}}]}}, "order_by": [{{"field": "TotalAmount", "direction": "DESC"}}], "limit": 1}}
+{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeChecksRecords"}}, {{"field_name": "EmployeeName", "dataSource": "EmployeeChecksRecords"}}], "filters": {{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "DepartmentCode", "dataSource": "EmployeeChecksRecords", "operator": "=", "value": "dev"}}, {{"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "EmployeeChecksRecords", "function": "YEAR", "operator": "=", "value": 2025}}, {{"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "EmployeeChecksRecords", "function": "MONTH", "operator": "=", "value": 12}}]}}, "aggregation": {{"functions": [{{"alias": "TotalAmount", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": "SUM"}}], "group_by": [{{"field": "EmployeeCode", "dataSource": "EmployeeChecksRecords"}}, {{"field": "EmployeeName", "dataSource": "EmployeeChecksRecords"}}]}}, "order_by": [{{"field": "TotalAmount", "direction": "DESC"}}], "limit": 1}}
 
 Q: "Employees in dev with expenses > 1000 OR any employee with expenses > 5000"
 {{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeChecksRecords"}}], "filters": {{"logicType": "OR", "conditions": [{{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "DepartmentCode", "dataSource": "EmployeeChecksRecords", "operator": "=", "value": "dev"}}, {{"logicType": "CONDITION", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": ">", "value": 1000}}]}}, {{"logicType": "CONDITION", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": ">", "value": 5000}}]}}}}
@@ -87,7 +91,11 @@ Q: "Show the 5 most recent hires"
 
 Q: "How many employees were hired each year?"
 (HireYear comes from fields with function. EmployeeCount comes from aggregation. Both are output columns.)
-{{"fields": [{{"field_name": "HireDate", "dataSource": "EmployeeInformation", "function": "YEAR", "alias": "HireYear"}}], "aggregation": {{"functions": [{{"alias": "EmployeeCount", "field_name": "EmployeeCode", "dataSource": "EmployeeInformation", "operator": "COUNT"}}], "group_by": [{{"field": "HireDate", "function": "YEAR"}}]}}, "order_by": [{{"field": "HireYear", "direction": "ASC"}}]}}
+{{"fields": [{{"field_name": "HireDate", "dataSource": "EmployeeInformation", "function": "YEAR", "alias": "HireYear"}}], "aggregation": {{"functions": [{{"alias": "EmployeeCount", "field_name": "EmployeeCode", "dataSource": "EmployeeInformation", "operator": "COUNT"}}], "group_by": [{{"field": "HireDate", "dataSource": "EmployeeInformation", "function": "YEAR"}}]}}, "order_by": [{{"field": "HireYear", "direction": "ASC"}}]}}
+
+Q: "How many employees are in each department?"
+(COUNT(*) — use field_name "*" to count all rows.)
+{{"fields": [{{"field_name": "DepartmentCode", "dataSource": "EmployeeInformation"}}], "aggregation": {{"functions": [{{"alias": "EmployeeCount", "field_name": "*", "dataSource": "EmployeeInformation", "operator": "COUNT"}}], "group_by": [{{"field": "DepartmentCode", "dataSource": "EmployeeInformation"}}]}}}}
 
 Q: "Show me detailed salary breakdown for all employees"
 (PayInformation cannot be joined with EmployeeInformation — no common join field)
