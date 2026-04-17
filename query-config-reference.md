@@ -20,12 +20,12 @@ Complete reference for every `QueryConfig` output shape and how to interpret eac
 
 ## 1. `fields` — SELECT columns
 
-Every `FieldConfig` becomes a column reference. `show` controls whether it appears in the output.
+`fields` is the SELECT list — only include fields you want in the output. Fields used solely for filtering, joining, or grouping do NOT go in `fields`.
 
 ### Basic field
 
 ```json
-{"field_name": "EmployeeName", "dataSource": "EmpInfo", "show": true}
+{"field_name": "EmployeeName", "dataSource": "EmpInfo"}
 ```
 
 ```sql
@@ -35,27 +35,17 @@ SELECT EmpInfo.EmployeeName
 ### Field with alias
 
 ```json
-{"field_name": "EmployeeName", "dataSource": "EmpInfo", "alias": "FullName", "show": true}
+{"field_name": "EmployeeName", "dataSource": "EmpInfo", "alias": "FullName"}
 ```
 
 ```sql
 SELECT EmpInfo.EmployeeName AS FullName
 ```
 
-### Hidden field (used in filter/join/group only)
-
-```json
-{"field_name": "DeptCode", "dataSource": "EmpInfo", "show": false}
-```
-
-```sql
--- DeptCode is referenced (WHERE/JOIN/GROUP BY) but excluded from the result columns
-```
-
 ### Field with date function
 
 ```json
-{"field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "alias": "HireYear", "show": true}
+{"field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "alias": "HireYear"}
 ```
 
 ```sql
@@ -63,7 +53,7 @@ SELECT YEAR(EmpInfo.HireDate) AS HireYear
 ```
 
 ```json
-{"field_name": "PayDate", "dataSource": "Checks", "function": "MONTH", "alias": "PayMonth", "show": true}
+{"field_name": "PayDate", "dataSource": "Checks", "function": "MONTH", "alias": "PayMonth"}
 ```
 
 ```sql
@@ -71,7 +61,7 @@ SELECT MONTH(Checks.PayDate) AS PayMonth
 ```
 
 ```json
-{"field_name": "StartDate", "dataSource": "EmpInfo", "function": "DAY", "alias": "StartDay", "show": true}
+{"field_name": "StartDate", "dataSource": "EmpInfo", "function": "DAY", "alias": "StartDay"}
 ```
 
 ```sql
@@ -83,7 +73,7 @@ SELECT DAY(EmpInfo.StartDate) AS StartDay
 When `distinct: true` on the QueryConfig:
 
 ```json
-{"distinct": true, "fields": [{"field_name": "DeptCode", "dataSource": "EmpInfo", "show": true}]}
+{"distinct": true, "fields": [{"field_name": "DeptCode", "dataSource": "EmpInfo"}]}
 ```
 
 ```sql
@@ -94,10 +84,12 @@ SELECT DISTINCT EmpInfo.DeptCode
 
 ## 2. `calculated_fields` — computed expressions
 
+Calculated fields are always included in the output (they are separate SELECT columns alongside `fields`).
+
 ### Basic expression
 
 ```json
-{"alias": "AnnualPay", "expression": "Salary * 12", "dataSources": ["PayInfo"], "show": true}
+{"alias": "AnnualPay", "expression": "Salary * 12", "dataSources": ["PayInfo"]}
 ```
 
 ```sql
@@ -107,26 +99,18 @@ SELECT (Salary * 12) AS AnnualPay
 ### Cross-data-source expression
 
 ```json
-{"alias": "NetPay", "expression": "Gross.Amount - Deductions.Amount", "dataSources": ["Gross", "Deductions"], "show": true}
+{"alias": "NetPay", "expression": "Gross.Amount - Deductions.Amount", "dataSources": ["Gross", "Deductions"]}
 ```
 
 ```sql
 SELECT (Gross.Amount - Deductions.Amount) AS NetPay
 ```
 
-### Hidden calculated field
-
-```json
-{"alias": "TaxBracket", "expression": "Salary * 0.3", "dataSources": ["PayInfo"], "show": false}
-```
-
-```sql
--- (Salary * 0.3) AS TaxBracket is computed internally but not returned to the user
-```
-
 ---
 
 ## 3. `filters` — WHERE clause
+
+Filters reference fields directly by `field_name` + `dataSource`. Filter-only fields do NOT appear in `fields`.
 
 ### Single condition
 
@@ -380,6 +364,8 @@ LEFT JOIN PayCodes ON Checks.PayCodeId = PayCodes.PayCodeId
 
 ## 5. `aggregation` — GROUP BY + aggregate functions
 
+Aggregation functions are always included in the output (they are separate SELECT columns alongside `fields`).
+
 ### All aggregation operators
 
 | Operator | JSON | SQL |
@@ -397,7 +383,7 @@ LEFT JOIN PayCodes ON Checks.PayCodeId = PayCodes.PayCodeId
 {
   "aggregation": {
     "functions": [
-      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true}
+      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
     "group_by": [{"field": "DeptCode"}]
   }
@@ -416,9 +402,9 @@ GROUP BY DeptCode
 {
   "aggregation": {
     "functions": [
-      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true},
-      {"alias": "AvgAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "AVG", "show": true},
-      {"alias": "EmpCount", "field_name": "EmpCode", "dataSource": "Checks", "operator": "COUNT_DISTINCT", "show": true}
+      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"},
+      {"alias": "AvgAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "AVG"},
+      {"alias": "EmpCount", "field_name": "EmpCode", "dataSource": "Checks", "operator": "COUNT_DISTINCT"}
     ],
     "group_by": [{"field": "DeptCode"}]
   }
@@ -434,35 +420,13 @@ FROM Checks
 GROUP BY DeptCode
 ```
 
-### Hidden aggregation (computed but not shown)
-
-```json
-{
-  "aggregation": {
-    "functions": [
-      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true},
-      {"alias": "RowCount", "field_name": "EmpCode", "dataSource": "Checks", "operator": "COUNT", "show": false}
-    ],
-    "group_by": [{"field": "DeptCode"}]
-  }
-}
-```
-
-```sql
-SELECT DeptCode,
-       SUM(Checks.Amount) AS TotalAmount
-       -- COUNT(Checks.EmpCode) AS RowCount  (computed, not in output)
-FROM Checks
-GROUP BY DeptCode
-```
-
 ### Aggregation with date function
 
 ```json
 {
   "aggregation": {
     "functions": [
-      {"alias": "HireCount", "field_name": "EmpCode", "dataSource": "EmpInfo", "operator": "COUNT", "show": true}
+      {"alias": "HireCount", "field_name": "EmpCode", "dataSource": "EmpInfo", "operator": "COUNT"}
     ],
     "group_by": [{"field": "HireDate", "function": "YEAR"}]
   }
@@ -478,7 +442,7 @@ GROUP BY YEAR(HireDate)
 ### Date function on the aggregation function itself
 
 ```json
-{"alias": "UniqueYears", "field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "operator": "COUNT_DISTINCT", "show": true}
+{"alias": "UniqueYears", "field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "operator": "COUNT_DISTINCT"}
 ```
 
 ```sql
@@ -507,7 +471,7 @@ GROUP BY DeptCode, YEAR(HireDate), MONTH(HireDate)
 {
   "aggregation": {
     "functions": [
-      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true}
+      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
     "group_by": [{"field": "EmpCode"}],
     "having": [{"aggregation_alias": "TotalAmount", "operator": ">", "value": 5000}]
@@ -568,11 +532,13 @@ HAVING SUM(Amount) > 5000
 
 These are **top-level** on QueryConfig — they work with or without aggregation.
 
+`order_by` can reference field names, aliases, or aggregation aliases.
+
 ### ORDER BY (without aggregation)
 
 ```json
 {
-  "fields": [{"field_name": "EmpName", "dataSource": "EmpInfo", "show": true}],
+  "fields": [{"field_name": "EmpName", "dataSource": "EmpInfo"}],
   "order_by": [{"field": "EmpName", "direction": "ASC"}]
 }
 ```
@@ -588,7 +554,7 @@ ORDER BY EmpName ASC
 ```json
 {
   "aggregation": {
-    "functions": [{"alias": "Total", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true}],
+    "functions": [{"alias": "Total", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}],
     "group_by": [{"field": "EmpCode"}]
   },
   "order_by": [{"field": "Total", "direction": "DESC"}]
@@ -634,8 +600,8 @@ ORDER BY DeptCode ASC, TotalAmount DESC
 ```json
 {
   "fields": [
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "HireDate", "dataSource": "EmpInfo", "show": true}
+    {"field_name": "EmpName", "dataSource": "EmpInfo"},
+    {"field_name": "HireDate", "dataSource": "EmpInfo"}
   ],
   "order_by": [{"field": "HireDate", "direction": "DESC"}],
   "limit": 5
@@ -653,7 +619,7 @@ LIMIT 5
 
 ```json
 {
-  "fields": [{"field_name": "EmpName", "dataSource": "EmpInfo", "show": true}],
+  "fields": [{"field_name": "EmpName", "dataSource": "EmpInfo"}],
   "order_by": [{"field": "EmpName", "direction": "ASC"}],
   "limit": 10,
   "offset": 20
@@ -672,7 +638,7 @@ LIMIT 10 OFFSET 20
 ```json
 {
   "aggregation": {
-    "functions": [{"alias": "Total", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true}],
+    "functions": [{"alias": "Total", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}],
     "group_by": [{"field": "DeptCode"}]
   },
   "order_by": [{"field": "Total", "direction": "DESC"}],
@@ -693,17 +659,18 @@ LIMIT 10 OFFSET 0
 
 ## 7. `subqueries` — nested queries
 
-### Scalar subquery (shown)
+Subqueries are always included in the output (they are separate SELECT columns alongside `fields`).
+
+### Scalar subquery
 
 ```json
 {
   "subqueries": [
     {
       "alias": "MaxSalary",
-      "show": true,
       "query": {
         "aggregation": {
-          "functions": [{"alias": "MaxSal", "field_name": "Salary", "dataSource": "PayInfo", "operator": "MAX", "show": true}],
+          "functions": [{"alias": "MaxSal", "field_name": "Salary", "dataSource": "PayInfo", "operator": "MAX"}],
           "group_by": []
         }
       }
@@ -717,29 +684,6 @@ SELECT ...,
   (SELECT MAX(PayInfo.Salary) FROM PayInfo) AS MaxSalary
 ```
 
-### Hidden subquery
-
-```json
-{
-  "subqueries": [
-    {
-      "alias": "AvgDeptPay",
-      "show": false,
-      "query": {
-        "aggregation": {
-          "functions": [{"alias": "AvgPay", "field_name": "Salary", "dataSource": "PayInfo", "operator": "AVG", "show": true}],
-          "group_by": []
-        }
-      }
-    }
-  ]
-}
-```
-
-```sql
--- (SELECT AVG(PayInfo.Salary) FROM PayInfo) AS AvgDeptPay  (computed, not in output)
-```
-
 ### Subquery with filters
 
 ```json
@@ -747,7 +691,6 @@ SELECT ...,
   "subqueries": [
     {
       "alias": "DevMaxSalary",
-      "show": true,
       "query": {
         "filters": {
           "conditions": [
@@ -755,7 +698,7 @@ SELECT ...,
           ]
         },
         "aggregation": {
-          "functions": [{"alias": "MaxSal", "field_name": "Salary", "dataSource": "PayInfo", "operator": "MAX", "show": true}],
+          "functions": [{"alias": "MaxSal", "field_name": "Salary", "dataSource": "PayInfo", "operator": "MAX"}],
           "group_by": []
         }
       }
@@ -780,8 +723,8 @@ All possible combinations of QueryConfig sections and their full SQL interpretat
 ```json
 {
   "fields": [
-    {"field_name": "EmpCode", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true}
+    {"field_name": "EmpCode", "dataSource": "EmpInfo"},
+    {"field_name": "EmpName", "dataSource": "EmpInfo"}
   ]
 }
 ```
@@ -797,8 +740,8 @@ FROM EmpInfo
 ```json
 {
   "fields": [
-    {"field_name": "EmpCode", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true}
+    {"field_name": "EmpCode", "dataSource": "EmpInfo"},
+    {"field_name": "EmpName", "dataSource": "EmpInfo"}
   ],
   "filters": {
     "conditions": [
@@ -815,13 +758,15 @@ FROM EmpInfo
 WHERE EmpInfo.Status = 'Active'
 ```
 
+Note: `Status` is used for filtering only — it does NOT appear in `fields`.
+
 ### Pattern 3: Fields + joins (multi-table SELECT)
 
 ```json
 {
   "fields": [
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "Amount", "dataSource": "Checks", "show": true}
+    {"field_name": "EmpName", "dataSource": "EmpInfo"},
+    {"field_name": "Amount", "dataSource": "Checks"}
   ],
   "joins": [
     {"left_data_source": "EmpInfo", "right_data_source": "Checks", "left_field": "EmpCode", "right_field": "EmpCode", "join_type": "INNER"}
@@ -841,8 +786,8 @@ INNER JOIN Checks ON EmpInfo.EmpCode = Checks.EmpCode
 ```json
 {
   "fields": [
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "Amount", "dataSource": "Checks", "show": true}
+    {"field_name": "EmpName", "dataSource": "EmpInfo"},
+    {"field_name": "Amount", "dataSource": "Checks"}
   ],
   "joins": [
     {"left_data_source": "EmpInfo", "right_data_source": "Checks", "left_field": "EmpCode", "right_field": "EmpCode", "join_type": "INNER"}
@@ -871,11 +816,11 @@ WHERE EmpInfo.Status = 'Active'
 ```json
 {
   "fields": [
-    {"field_name": "DeptCode", "dataSource": "Checks", "show": true}
+    {"field_name": "DeptCode", "dataSource": "Checks"}
   ],
   "aggregation": {
     "functions": [
-      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true}
+      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
     "group_by": [{"field": "DeptCode"}]
   }
@@ -894,7 +839,7 @@ GROUP BY DeptCode
 ```json
 {
   "fields": [
-    {"field_name": "DeptCode", "dataSource": "Checks", "show": true}
+    {"field_name": "DeptCode", "dataSource": "Checks"}
   ],
   "filters": {
     "conditions": [
@@ -903,7 +848,7 @@ GROUP BY DeptCode
   },
   "aggregation": {
     "functions": [
-      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true}
+      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
     "group_by": [{"field": "DeptCode"}]
   }
@@ -923,8 +868,7 @@ GROUP BY DeptCode
 ```json
 {
   "fields": [
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "DeptCode", "dataSource": "EmpInfo", "show": false}
+    {"field_name": "EmpName", "dataSource": "EmpInfo"}
   ],
   "joins": [
     {"left_data_source": "EmpInfo", "right_data_source": "Checks", "left_field": "EmpCode", "right_field": "EmpCode", "join_type": "INNER"}
@@ -936,7 +880,7 @@ GROUP BY DeptCode
   },
   "aggregation": {
     "functions": [
-      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true}
+      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"}
     ],
     "group_by": [{"field": "EmpName"}]
   },
@@ -947,7 +891,6 @@ GROUP BY DeptCode
 
 ```sql
 SELECT EmpInfo.EmpName,
-       -- EmpInfo.DeptCode  (show: false, used in WHERE only)
        SUM(Checks.Amount) AS TotalAmount
 FROM EmpInfo
 INNER JOIN Checks ON EmpInfo.EmpCode = Checks.EmpCode
@@ -957,17 +900,19 @@ ORDER BY TotalAmount DESC
 LIMIT 10
 ```
 
+Note: `DeptCode` is used for filtering only — it does NOT appear in `fields`.
+
 ### Pattern 8: Aggregation with HAVING (post-aggregation filter)
 
 ```json
 {
   "fields": [
-    {"field_name": "DeptCode", "dataSource": "Checks", "show": true}
+    {"field_name": "DeptCode", "dataSource": "Checks"}
   ],
   "aggregation": {
     "functions": [
-      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true},
-      {"alias": "EmpCount", "field_name": "EmpCode", "dataSource": "Checks", "operator": "COUNT_DISTINCT", "show": true}
+      {"alias": "TotalAmount", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"},
+      {"alias": "EmpCount", "field_name": "EmpCode", "dataSource": "Checks", "operator": "COUNT_DISTINCT"}
     ],
     "group_by": [{"field": "DeptCode"}],
     "having": [
@@ -995,7 +940,7 @@ ORDER BY TotalAmount DESC
 ```json
 {
   "fields": [
-    {"field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "alias": "HireYear", "show": true}
+    {"field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "alias": "HireYear"}
   ],
   "filters": {
     "conditions": [
@@ -1004,7 +949,7 @@ ORDER BY TotalAmount DESC
   },
   "aggregation": {
     "functions": [
-      {"alias": "HireCount", "field_name": "EmpCode", "dataSource": "EmpInfo", "operator": "COUNT", "show": true}
+      {"alias": "HireCount", "field_name": "EmpCode", "dataSource": "EmpInfo", "operator": "COUNT"}
     ],
     "group_by": [{"field": "HireDate", "function": "YEAR"}]
   },
@@ -1026,11 +971,11 @@ ORDER BY HireYear ASC
 ```json
 {
   "fields": [
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "Salary", "dataSource": "PayInfo", "show": true}
+    {"field_name": "EmpName", "dataSource": "EmpInfo"},
+    {"field_name": "Salary", "dataSource": "PayInfo"}
   ],
   "calculated_fields": [
-    {"alias": "AnnualPay", "expression": "Salary * 12", "dataSources": ["PayInfo"], "show": true}
+    {"alias": "AnnualPay", "expression": "Salary * 12", "dataSources": ["PayInfo"]}
   ],
   "joins": [
     {"left_data_source": "EmpInfo", "right_data_source": "PayInfo", "left_field": "EmpCode", "right_field": "EmpCode", "join_type": "INNER"}
@@ -1051,8 +996,8 @@ INNER JOIN PayInfo ON EmpInfo.EmpCode = PayInfo.EmpCode
 ```json
 {
   "fields": [
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "Salary", "dataSource": "PayInfo", "show": true}
+    {"field_name": "EmpName", "dataSource": "EmpInfo"},
+    {"field_name": "Salary", "dataSource": "PayInfo"}
   ],
   "joins": [
     {"left_data_source": "EmpInfo", "right_data_source": "PayInfo", "left_field": "EmpCode", "right_field": "EmpCode", "join_type": "INNER"}
@@ -1060,10 +1005,9 @@ INNER JOIN PayInfo ON EmpInfo.EmpCode = PayInfo.EmpCode
   "subqueries": [
     {
       "alias": "CompanyAvg",
-      "show": true,
       "query": {
         "aggregation": {
-          "functions": [{"alias": "AvgSal", "field_name": "Salary", "dataSource": "PayInfo", "operator": "AVG", "show": true}],
+          "functions": [{"alias": "AvgSal", "field_name": "Salary", "dataSource": "PayInfo", "operator": "AVG"}],
           "group_by": []
         }
       }
@@ -1085,7 +1029,7 @@ INNER JOIN PayInfo ON EmpInfo.EmpCode = PayInfo.EmpCode
 ```json
 {
   "fields": [
-    {"field_name": "DeptCode", "dataSource": "EmpInfo", "show": true}
+    {"field_name": "DeptCode", "dataSource": "EmpInfo"}
   ],
   "filters": {
     "conditions": [
@@ -1107,8 +1051,8 @@ WHERE EmpInfo.Status = 'Active'
 ```json
 {
   "fields": [
-    {"field_name": "EmpCode", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true}
+    {"field_name": "EmpCode", "dataSource": "EmpInfo"},
+    {"field_name": "EmpName", "dataSource": "EmpInfo"}
   ],
   "filters": {
     "conditions": [
@@ -1130,12 +1074,11 @@ WHERE EmpInfo.EmpName LIKE '%smith%'
 ```json
 {
   "fields": [
-    {"field_name": "EmpName", "dataSource": "EmpInfo", "show": true},
-    {"field_name": "DeptCode", "dataSource": "EmpInfo", "show": false},
-    {"field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "alias": "HireYear", "show": true}
+    {"field_name": "EmpName", "dataSource": "EmpInfo"},
+    {"field_name": "HireDate", "dataSource": "EmpInfo", "function": "YEAR", "alias": "HireYear"}
   ],
   "calculated_fields": [
-    {"alias": "AnnualPay", "expression": "Salary * 12", "dataSources": ["PayInfo"], "show": true}
+    {"alias": "AnnualPay", "expression": "Salary * 12", "dataSources": ["PayInfo"]}
   ],
   "joins": [
     {"left_data_source": "EmpInfo", "right_data_source": "Checks", "left_field": "EmpCode", "right_field": "EmpCode", "join_type": "INNER"},
@@ -1157,9 +1100,8 @@ WHERE EmpInfo.EmpName LIKE '%smith%'
   },
   "aggregation": {
     "functions": [
-      {"alias": "TotalExpenses", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM", "show": true},
-      {"alias": "CheckCount", "field_name": "Amount", "dataSource": "Checks", "operator": "COUNT", "show": true},
-      {"alias": "MaxCheck", "field_name": "Amount", "dataSource": "Checks", "operator": "MAX", "show": false}
+      {"alias": "TotalExpenses", "field_name": "Amount", "dataSource": "Checks", "operator": "SUM"},
+      {"alias": "CheckCount", "field_name": "Amount", "dataSource": "Checks", "operator": "COUNT"}
     ],
     "group_by": [
       {"field": "EmpName"},
@@ -1173,10 +1115,9 @@ WHERE EmpInfo.EmpName LIKE '%smith%'
   "subqueries": [
     {
       "alias": "CompanyAvgExpense",
-      "show": true,
       "query": {
         "aggregation": {
-          "functions": [{"alias": "AvgExp", "field_name": "Amount", "dataSource": "Checks", "operator": "AVG", "show": true}],
+          "functions": [{"alias": "AvgExp", "field_name": "Amount", "dataSource": "Checks", "operator": "AVG"}],
           "group_by": []
         }
       }
@@ -1192,14 +1133,12 @@ WHERE EmpInfo.EmpName LIKE '%smith%'
 ```
 
 ```sql
-SELECT EmpInfo.EmpName,                             -- field, show: true
-       -- EmpInfo.DeptCode                           -- field, show: false (WHERE only)
-       YEAR(EmpInfo.HireDate) AS HireYear,           -- field + function, show: true
-       (Salary * 12) AS AnnualPay,                   -- calculated_field, show: true
-       SUM(Checks.Amount) AS TotalExpenses,          -- aggregation, show: true
-       COUNT(Checks.Amount) AS CheckCount,           -- aggregation, show: true
-       -- MAX(Checks.Amount) AS MaxCheck             -- aggregation, show: false
-       (SELECT AVG(Checks.Amount) FROM Checks) AS CompanyAvgExpense  -- subquery, show: true
+SELECT EmpInfo.EmpName,
+       YEAR(EmpInfo.HireDate) AS HireYear,
+       (Salary * 12) AS AnnualPay,
+       SUM(Checks.Amount) AS TotalExpenses,
+       COUNT(Checks.Amount) AS CheckCount,
+       (SELECT AVG(Checks.Amount) FROM Checks) AS CompanyAvgExpense
 FROM EmpInfo
 INNER JOIN Checks ON EmpInfo.EmpCode = Checks.EmpCode
 LEFT JOIN PayInfo ON EmpInfo.EmpCode = PayInfo.EmpCode
@@ -1212,6 +1151,8 @@ HAVING SUM(Checks.Amount) > 10000
 ORDER BY TotalExpenses DESC, HireYear ASC
 LIMIT 20
 ```
+
+Note: `Status` and `DeptCode` are used for filtering only — they do NOT appear in `fields`.
 
 ### Pattern 15: Empty query (cannot be built)
 
@@ -1229,26 +1170,22 @@ LIMIT 20
 
 | QueryConfig field | SQL clause | Output column? |
 |---|---|---|
-| `fields` (show: true) | `SELECT col` | Yes |
-| `fields` (show: false) | referenced in FROM, not in SELECT | No |
-| `fields` + `function` | `SELECT YEAR/MONTH/DAY(col)` | Depends on `show` |
-| `calculated_fields` (show: true) | `SELECT (expr) AS alias` | Yes |
-| `calculated_fields` (show: false) | computed, not in SELECT | No |
+| `fields` | `SELECT col` | Yes — always |
+| `fields` + `function` | `SELECT YEAR/MONTH/DAY(col)` | Yes — always |
+| `calculated_fields` | `SELECT (expr) AS alias` | Yes — always |
 | `filters.conditions` | `WHERE ...` | No |
 | `filters.conditions` + `function` | `WHERE YEAR/MONTH/DAY(col) ...` | No |
 | `filters` nested groups | `WHERE (... AND/OR ...)` | No |
 | `joins` | `[INNER\|LEFT\|RIGHT\|FULL\|CROSS] JOIN ... ON ...` | No |
-| `aggregation.functions` (show: true) | `SELECT AGG(col) AS alias` | Yes |
-| `aggregation.functions` (show: false) | computed, not in SELECT | No |
-| `aggregation.functions` + `function` | `SELECT AGG(YEAR/MONTH/DAY(col))` | Depends on `show` |
+| `aggregation.functions` | `SELECT AGG(col) AS alias` | Yes — always |
+| `aggregation.functions` + `function` | `SELECT AGG(YEAR/MONTH/DAY(col))` | Yes — always |
 | `aggregation.group_by` | `GROUP BY col` | No |
 | `aggregation.group_by` + `function` | `GROUP BY YEAR/MONTH/DAY(col)` | No |
 | `aggregation.having` | `HAVING AGG(col) op value` | No |
 | `order_by` | `ORDER BY col [ASC\|DESC] [NULLS FIRST\|LAST]` | No |
 | `limit` | `LIMIT N` | No |
 | `offset` | `OFFSET N` | No |
-| `subqueries` (show: true) | `SELECT (subquery) AS alias` | Yes |
-| `subqueries` (show: false) | computed, not in SELECT | No |
+| `subqueries` | `SELECT (subquery) AS alias` | Yes — always |
 | `distinct` | `SELECT DISTINCT` | N/A (modifier) |
 | `{}` (empty) | no valid query | N/A |
 
@@ -1259,8 +1196,7 @@ LIMIT 20
 When converting a full QueryConfig to SQL, assemble in this order:
 
 ```
-1. SELECT       ← fields (show:true) + calculated_fields (show:true)
-                  + aggregation.functions (show:true) + subqueries (show:true)
+1. SELECT       ← fields + calculated_fields + aggregation.functions + subqueries
                   + DISTINCT modifier
 2. FROM         ← primary data source (first field's dataSource)
 3. JOIN         ← joins[]

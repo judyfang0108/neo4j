@@ -15,7 +15,6 @@ class CalculatedField(BaseModel):
 
     alias: str
     expression: str
-    show: bool = True  # Whether to include in output
     dataSources: List[str] = Field(
         alias="dataSources"
     )  # Support multiple data sources for cross-data source expressions
@@ -44,7 +43,6 @@ class FieldConfig(BaseModel):
     field_name: str
     dataSource: str
     alias: Optional[str] = None  # For aliasing in output
-    show: bool = True  # Whether to include in output (SELECT) vs only use for filtering/joining
     function: Optional[DateFunction] = None  # e.g. YEAR(HireDate) → "function": "YEAR"
 
 
@@ -138,7 +136,6 @@ class AggregationFunction(BaseModel):
     dataSource: str
     function: Optional[DateFunction] = None  # e.g. COUNT_DISTINCT(YEAR(HireDate))
     operator: Literal["SUM", "COUNT", "AVG", "MAX", "MIN", "COUNT_DISTINCT"]
-    show: bool = True  # Whether to include in output
 
 
 class HavingCondition(BaseModel):
@@ -173,7 +170,6 @@ class Subquery(BaseModel):
 
     alias: str
     query: "QueryConfig"  # Recursive reference to QueryConfig
-    show: bool = True  # Whether to include subquery result in output
 
 
 class QueryConfig(BaseModel):

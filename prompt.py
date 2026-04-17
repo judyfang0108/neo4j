@@ -21,8 +21,8 @@ def build_system_prompt(schema_summary_text: str) -> str:
 ## JSON Format
 
 {{
-  "fields": [{{"field_name": "...", "dataSource": "...", "alias": "...", "show": true, "function": "YEAR|MONTH|DAY"}}],
-  "calculated_fields": [{{"alias": "...", "expression": "...", "dataSources": ["..."], "show": true}}],
+  "fields": [{{"field_name": "...", "dataSource": "...", "alias": "...", "function": "YEAR|MONTH|DAY"}}],
+  "calculated_fields": [{{"alias": "...", "expression": "...", "dataSources": ["..."]}}],
   "distinct": false,
   "filters": {{
     "logicType": "AND|OR",
@@ -33,11 +33,11 @@ def build_system_prompt(schema_summary_text: str) -> str:
   }},
   "joins": [{{"left_data_source": "...", "right_data_source": "...", "left_field": "...", "right_field": "...", "join_type": "INNER|LEFT|RIGHT|FULL|CROSS"}}],
   "aggregation": {{
-    "functions": [{{"alias": "...", "field_name": "...", "dataSource": "...", "function": "YEAR|MONTH|DAY", "operator": "SUM|COUNT|AVG|MAX|MIN|COUNT_DISTINCT", "show": true}}],
+    "functions": [{{"alias": "...", "field_name": "...", "dataSource": "...", "function": "YEAR|MONTH|DAY", "operator": "SUM|COUNT|AVG|MAX|MIN|COUNT_DISTINCT"}}],
     "group_by": [{{"field": "...", "function": "YEAR|MONTH|DAY"}}],
     "having": [{{"aggregation_alias": "...", "operator": "...", "value": ..., "value_end": ...}}]
   }},
-  "subqueries": [{{"alias": "...", "query": {{...}}, "show": true}}],
+  "subqueries": [{{"alias": "...", "query": {{...}}}}],
   "order_by": [{{"field": "...", "direction": "ASC|DESC"}}],
   "limit": N,
   "offset": N
@@ -56,11 +56,9 @@ def build_system_prompt(schema_summary_text: str) -> str:
    `order_by`, `limit`, and `offset` are top-level — they work with or without `aggregation`.
    - `order_by` can reference field names, aliases, or aggregation aliases.
    - `offset` skips the first N rows (for pagination). Use with `limit`.
-9. `show` controls whether a field appears in the output (like SQL SELECT).
-   - `"show": true` (default) — include in the result (SELECT column).
-   - `"show": false` — used only for filtering, joining, or grouping, but not returned in output.
-   - Fields referenced only in filters/joins do NOT need a `fields` entry. Add a field with `"show": false` only when it must appear in `fields` for structural reasons (e.g. group_by) but should be hidden from the user.
-   - Calculated fields, aggregation functions, and subqueries also support `show`. Set `"show": true` on any of these that the user wants to see in the result.
+9. `fields` is the SELECT list — only include fields you want in the output.
+   - Do NOT add fields that are only used for filtering, joining, or grouping. Filters and joins reference fields directly by `field_name` + `dataSource`.
+   - `calculated_fields`, `aggregation.functions`, and `subqueries` are always included in the output (they are separate SELECT columns alongside `fields`).
 10. Fields in the schema are marked as either **freeform** or not (strict/enum).
    - **Freeform fields** accept free text (names, descriptions, notes). Use `LIKE` with `%keyword%` for filtering. Do NOT use exact `=` unless the user specifies an exact value.
    - **Non-freeform fields** have fixed/structured values. Use exact match (`=`, `IN`, `BETWEEN`) only. NEVER use `LIKE` or `NOT LIKE` on non-freeform fields.
@@ -74,22 +72,22 @@ def build_system_prompt(schema_summary_text: str) -> str:
 ## Examples
 
 Q: "Who has unfinished surveys?"
-{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "LearningFeatures", "show": true}}, {{"field_name": "EmployeeName", "dataSource": "LearningFeatures", "show": true}}, {{"field_name": "ContentName", "dataSource": "LearningFeatures", "show": true}}], "filters": {{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "ContentComplete", "dataSource": "LearningFeatures", "operator": "=", "value": "No"}}]}}}}
+{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "LearningFeatures"}}, {{"field_name": "EmployeeName", "dataSource": "LearningFeatures"}}, {{"field_name": "ContentName", "dataSource": "LearningFeatures"}}], "filters": {{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "ContentComplete", "dataSource": "LearningFeatures", "operator": "=", "value": "No"}}]}}}}
 
 Q: "Who in dev department has the highest expenses in Dec 2025?"
-(DepartmentCode is used for filtering only — not shown. order_by and limit are top-level.)
-{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeChecksRecords", "show": true}}, {{"field_name": "EmployeeName", "dataSource": "EmployeeChecksRecords", "show": true}}, {{"field_name": "DepartmentCode", "dataSource": "EmployeeChecksRecords", "show": false}}], "filters": {{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "DepartmentCode", "dataSource": "EmployeeChecksRecords", "operator": "=", "value": "dev"}}, {{"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "EmployeeChecksRecords", "function": "YEAR", "operator": "=", "value": 2025}}, {{"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "EmployeeChecksRecords", "function": "MONTH", "operator": "=", "value": 12}}]}}, "aggregation": {{"functions": [{{"alias": "TotalAmount", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": "SUM", "show": true}}], "group_by": [{{"field": "EmployeeCode"}}, {{"field": "EmployeeName"}}]}}, "order_by": [{{"field": "TotalAmount", "direction": "DESC"}}], "limit": 1}}
+(DepartmentCode is used for filtering only — NOT in fields. TotalAmount comes from aggregation.)
+{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeChecksRecords"}}, {{"field_name": "EmployeeName", "dataSource": "EmployeeChecksRecords"}}], "filters": {{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "DepartmentCode", "dataSource": "EmployeeChecksRecords", "operator": "=", "value": "dev"}}, {{"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "EmployeeChecksRecords", "function": "YEAR", "operator": "=", "value": 2025}}, {{"logicType": "CONDITION", "field_name": "PayDate", "dataSource": "EmployeeChecksRecords", "function": "MONTH", "operator": "=", "value": 12}}]}}, "aggregation": {{"functions": [{{"alias": "TotalAmount", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": "SUM"}}], "group_by": [{{"field": "EmployeeCode"}}, {{"field": "EmployeeName"}}]}}, "order_by": [{{"field": "TotalAmount", "direction": "DESC"}}], "limit": 1}}
 
 Q: "Employees in dev with expenses > 1000 OR any employee with expenses > 5000"
-{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeChecksRecords", "show": true}}], "filters": {{"logicType": "OR", "conditions": [{{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "DepartmentCode", "dataSource": "EmployeeChecksRecords", "operator": "=", "value": "dev"}}, {{"logicType": "CONDITION", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": ">", "value": 1000}}]}}, {{"logicType": "CONDITION", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": ">", "value": 5000}}]}}}}
+{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeChecksRecords"}}], "filters": {{"logicType": "OR", "conditions": [{{"logicType": "AND", "conditions": [{{"logicType": "CONDITION", "field_name": "DepartmentCode", "dataSource": "EmployeeChecksRecords", "operator": "=", "value": "dev"}}, {{"logicType": "CONDITION", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": ">", "value": 1000}}]}}, {{"logicType": "CONDITION", "field_name": "Amount", "dataSource": "EmployeeChecksRecords", "operator": ">", "value": 5000}}]}}}}
 
 Q: "Show the 5 most recent hires"
 (order_by and limit without aggregation — simple top-N query.)
-{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeInformation", "show": true}}, {{"field_name": "EmployeeName", "dataSource": "EmployeeInformation", "show": true}}, {{"field_name": "HireDate", "dataSource": "EmployeeInformation", "show": true}}], "order_by": [{{"field": "HireDate", "direction": "DESC"}}], "limit": 5}}
+{{"fields": [{{"field_name": "EmployeeCode", "dataSource": "EmployeeInformation"}}, {{"field_name": "EmployeeName", "dataSource": "EmployeeInformation"}}, {{"field_name": "HireDate", "dataSource": "EmployeeInformation"}}], "order_by": [{{"field": "HireDate", "direction": "DESC"}}], "limit": 5}}
 
 Q: "How many employees were hired each year?"
-(Uses function: YEAR on HireDate in both SELECT and GROUP BY. order_by is top-level.)
-{{"fields": [{{"field_name": "HireDate", "dataSource": "EmployeeInformation", "function": "YEAR", "alias": "HireYear", "show": true}}], "aggregation": {{"functions": [{{"alias": "EmployeeCount", "field_name": "EmployeeCode", "dataSource": "EmployeeInformation", "operator": "COUNT", "show": true}}], "group_by": [{{"field": "HireDate", "function": "YEAR"}}]}}, "order_by": [{{"field": "HireYear", "direction": "ASC"}}]}}
+(HireYear comes from fields with function. EmployeeCount comes from aggregation. Both are output columns.)
+{{"fields": [{{"field_name": "HireDate", "dataSource": "EmployeeInformation", "function": "YEAR", "alias": "HireYear"}}], "aggregation": {{"functions": [{{"alias": "EmployeeCount", "field_name": "EmployeeCode", "dataSource": "EmployeeInformation", "operator": "COUNT"}}], "group_by": [{{"field": "HireDate", "function": "YEAR"}}]}}, "order_by": [{{"field": "HireYear", "direction": "ASC"}}]}}
 
 Q: "Show me detailed salary breakdown for all employees"
 (PayInformation cannot be joined with EmployeeInformation — no common join field)
