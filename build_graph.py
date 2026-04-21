@@ -18,7 +18,7 @@ def flatten_fields(schema):
     """Yield one dict per Field node, carrying everything we need.
 
     Neo4j drops properties whose value is null, so every property listed in
-    graph.MD is given a type-appropriate default ("" / false / []) to keep it
+    docs/graph.md is given a type-appropriate default ("" / false / []) to keep it
     visible on every node. Real values overwrite the defaults when present.
     """
     for module_id, module in schema.items():
@@ -62,7 +62,7 @@ def build_graph(tx, schema):
     # Wipe any prior version so re-runs are clean
     tx.run("MATCH (n) WHERE n:Module OR n:Field DETACH DELETE n")
 
-    # Create Module nodes — every property in graph.MD gets a default so it
+    # Create Module nodes — every property in docs/graph.md gets a default so it
     # is visible on the node even before the embedding pipeline populates it.
     for module_id, module in schema.items():
         tx.run(

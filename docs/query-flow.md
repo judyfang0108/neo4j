@@ -170,12 +170,45 @@ Each subquery's inner `QueryConfig` is validated recursively through the same ch
 ### 5g. Required filters
 If a data source has mandatory filters (e.g. a date range filter for large tables), the query must include a filter on that field.
 
-### 5h. Data source combinability
-If the query uses fields from multiple data sources, every pair must be either:
-- In the **same MultiSelect module** (implicit join — no `joins` entry needed), or
-- Connected by an **explicit `joins` entry**
+### 5h. Data source combinability (transitive reachability)
 
-Otherwise the query is rejected. This prevents the LLM from silently combining unrelated data sources.
+If the query uses fields from multiple data sources, they must all be **transitively connected**. Two data sources are directly connected if they:
+- Are in the **same MultiSelect module** (implicit join), OR
+- Have an **explicit `joins` entry** between them
+
+Transitive reachability means: if A connects to B and B connects to C, then A, B, C are all combinable — no direct link is needed for every pair. The validator uses a union-find algorithm to build connected groups and rejects the query only if multiple disconnected groups remain.
+
+#### Example
+
+Given 3 modules:
+```
+Module A (MultiSelect): DS_1, DS_2
+Module B (SingleSelect): DS_3
+Module C (MultiSelect): DS_4, DS_5
+```
+
+A query uses `DS_1`, `DS_2`, `DS_3`, `DS_4` with explicit joins: `DS_1 ↔ DS_3` and `DS_1 ↔ DS_4`.
+
+**Step 1 — MultiSelect connections:**
+- `DS_1` and `DS_2` are in Module A (MultiSelect) → connected
+- Group so far: `{DS_1, DS_2}`, `{DS_3}`, `{DS_4}`
+
+**Step 2 — Explicit join connections:**
+- `DS_1 ↔ DS_3` → group becomes `{DS_1, DS_2, DS_3}`
+- `DS_1 ↔ DS_4` → group becomes `{DS_1, DS_2, DS_3, DS_4}`
+
+**Step 3 — Check:** 1 connected group → **pass**
+
+Note that `DS_2 ↔ DS_3` has no direct link, but passes because `DS_2` connects to `DS_1` (MultiSelect) and `DS_1` joins to `DS_3` (explicit join). Without transitive reachability, this would incorrectly fail.
+
+#### What the error looks like
+
+If the query used `DS_1`, `DS_3`, `DS_4` but only had a join for `DS_1 ↔ DS_3` (missing `DS_4`):
+
+```
+Data sources are not all connected. Disconnected groups: [DS_1, DS_3] / [DS_4].
+Add explicit joins between groups or use data sources from the same MultiSelect module.
+```
 
 ### On validation failure: self-correction
 

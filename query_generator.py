@@ -448,31 +448,61 @@ class QueryGenerator:
                             f"Data source '{ds}' requires a filter on '{fid}'"
                         )
 
-        # Check that every pair of data sources is actually combinable:
-        # either in the same MultiSelect module, or connected by an explicit join
+        # Check that all used data sources are transitively reachable.
+        # Two data sources are directly connected if they:
+        #   - are in the same MultiSelect module (implicit join), OR
+        #   - have an explicit join between them
+        # Transitive reachability: if A connects to B and B connects to C,
+        # then A, B, C are all combinable — no direct link needed for every pair.
         if len(used_ds) > 1:
-            joined_ds = set()
+            # Union-Find to build connected groups
+            parent = {ds: ds for ds in used_ds}
+
+            def find(x):
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+
+            def union(a, b):
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    parent[ra] = rb
+
+            # Connect data sources in the same MultiSelect module
+            multiselect_groups = {}
+            for ds in used_ds:
+                mod = self._ds_to_module.get(ds)
+                if mod and (self._module_select_type.get(mod) or "").lower() == "multiselect":
+                    if mod not in multiselect_groups:
+                        multiselect_groups[mod] = []
+                    multiselect_groups[mod].append(ds)
+            for ds_group in multiselect_groups.values():
+                for ds in ds_group[1:]:
+                    union(ds_group[0], ds)
+
+            # Connect data sources with explicit joins
             if query.joins:
                 for j in query.joins:
-                    joined_ds.add((j.left_data_source, j.right_data_source))
-                    joined_ds.add((j.right_data_source, j.left_data_source))
+                    if j.left_data_source in used_ds and j.right_data_source in used_ds:
+                        union(j.left_data_source, j.right_data_source)
 
-            ds_list = sorted(used_ds)
-            for i, ds_a in enumerate(ds_list):
-                for ds_b in ds_list[i + 1:]:
-                    mod_a = self._ds_to_module.get(ds_a)
-                    mod_b = self._ds_to_module.get(ds_b)
-                    in_same_multiselect = (
-                        mod_a
-                        and mod_a == mod_b
-                        and (self._module_select_type.get(mod_a) or "").lower() == "multiselect"
-                    )
-                    has_explicit_join = (ds_a, ds_b) in joined_ds
-                    if not in_same_multiselect and not has_explicit_join:
-                        errors.append(
-                            f"Data sources '{ds_a}' and '{ds_b}' are used together "
-                            f"but have no explicit join and are not in the same MultiSelect module"
-                        )
+            # All used data sources must be in one connected group
+            roots = {find(ds) for ds in used_ds}
+            if len(roots) > 1:
+                # Build the disconnected groups for a clear error message
+                groups = {}
+                for ds in sorted(used_ds):
+                    r = find(ds)
+                    if r not in groups:
+                        groups[r] = []
+                    groups[r].append(ds)
+                group_strs = [", ".join(g) for g in groups.values()]
+                errors.append(
+                    f"Data sources are not all connected. "
+                    f"Disconnected groups: [{'] / ['.join(group_strs)}]. "
+                    f"Add explicit joins between groups or use data sources from the same MultiSelect module."
+                )
 
         return errors
 
