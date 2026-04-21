@@ -189,9 +189,10 @@ class QueryGenerator:
         for left_ds, left_f, right_ds, right_f in joins:
             self._join_pairs.add((left_ds, left_f, right_ds, right_f))
             self._join_pairs.add((right_ds, right_f, left_ds, left_f))
-        # Track module selectType and which module each data source belongs to
-        self._module_select_type = {
-            mid: mdata["selectType"] for mid, mdata in modules.items()
+        # Track which modules are MultiSelect and which module each data source belongs to
+        self._multiselect_modules = {
+            mid for mid, mdata in modules.items()
+            if (mdata["selectType"]).lower() == "multiselect"
         }
         self._ds_to_module = {}
         for mid, mdata in modules.items():
@@ -222,7 +223,7 @@ class QueryGenerator:
         # MultiSelect modules — all data sources are implicitly combinable
         multiselect_modules = []
         for mid, mdata in modules.items():
-            if (mdata.get("selectType") or "").lower() == "multiselect":
+            if self._is_multiselect_module(mid):
                 ds_list = list(mdata["dataSources"].keys())
                 if len(ds_list) > 1:
                     multiselect_modules.append((mid, ds_list))
@@ -340,7 +341,7 @@ class QueryGenerator:
                     in_same_multiselect = (
                         left_mod
                         and left_mod == right_mod
-                        and (self._module_select_type.get(left_mod) or "").lower() == "multiselect"
+                        and self._is_multiselect_module(left_mod)
                     )
                     if not in_same_multiselect:
                         errors.append(
@@ -473,7 +474,7 @@ class QueryGenerator:
             multiselect_groups = {}
             for ds in used_ds:
                 mod = self._ds_to_module.get(ds)
-                if mod and (self._module_select_type.get(mod) or "").lower() == "multiselect":
+                if mod and self._is_multiselect_module(mod):
                     if mod not in multiselect_groups:
                         multiselect_groups[mod] = []
                     multiselect_groups[mod].append(ds)
@@ -522,6 +523,9 @@ class QueryGenerator:
 
     def _data_source_exists(self, data_source: str) -> bool:
         return data_source in self._ds_set
+
+    def _is_multiselect_module(self, module_id: str) -> bool:
+        return module_id in self._multiselect_modules
 
     def _validate_date_function(
         self, data_source: str, field_name: str, function: str

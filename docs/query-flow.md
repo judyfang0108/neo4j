@@ -45,7 +45,7 @@ User question
 
 ## Step 1: Build the graph (one-time setup)
 
-**File:** [build_graph.py](build_graph.py)
+**File:** [build_graph.py](../build_graph.py)
 
 Reads `schema.json` and writes nodes + relationships into Neo4j.
 
@@ -76,7 +76,7 @@ python build_graph.py
 
 ## Step 2: Initialize the generator (once per session)
 
-**File:** [query_generator.py](query_generator.py) — `QueryGenerator.__init__`
+**File:** [query_generator.py](../query_generator.py) — `QueryGenerator.__init__`
 
 On startup, the generator:
 
@@ -90,7 +90,7 @@ On startup, the generator:
    - `_field_meta` — metadata per field (type, enum options, freeform flag)
    - `_join_pairs` — set of valid `(dsA, fieldA, dsB, fieldB)` join tuples
    - `_ds_to_module` — maps each data source to its parent module
-   - `_module_select_type` — maps each module to its `selectType`
+   - `_multiselect_modules` — set of modules with `selectType: MultiSelect`
    - `_required_filters` — data sources that require certain filters
 
 3. **Builds the system prompt** from the graph data. The prompt includes:
@@ -106,7 +106,7 @@ On startup, the generator:
 
 ## Step 3: Send to LLM
 
-**File:** [query_generator.py](query_generator.py) — `generate_query`
+**File:** [query_generator.py](../query_generator.py) — `generate_query`
 
 The generator sends two messages to the LLM:
 - **System message:** the full system prompt (schema + rules + examples) built in step 2
@@ -118,13 +118,13 @@ Configuration: model, base URL, and API key come from environment variables / `.
 
 ## Step 4: Parse the response
 
-**File:** [query_generator.py](query_generator.py) — `_extract_json`
+**File:** [query_generator.py](../query_generator.py) — `_extract_json`
 
 The raw LLM response may contain markdown fences or think tags. The parser:
 1. Strips `<think>...</think>` blocks (for models like Qwen3)
 2. Strips markdown ` ```json ... ``` ` fences
 3. Parses the remaining text as JSON
-4. Constructs a `QueryConfig` Pydantic model ([dataclass.py](dataclass.py))
+4. Constructs a `QueryConfig` Pydantic model ([dataclass.py](../dataclass.py))
 
 `QueryConfig` includes: `fields`, `calculated_fields`, `filters`, `joins`, `aggregation`, `subqueries`, `order_by`, `limit`, `offset`, `distinct`.
 
@@ -134,7 +134,7 @@ Pydantic validates structural correctness (required fields, enum values, operato
 
 ## Step 5: Validate against the graph
 
-**File:** [query_generator.py](query_generator.py) — `validate_query`
+**File:** [query_generator.py](../query_generator.py) — `validate_query`
 
 This is where the graph knowledge is used to catch errors the LLM might make. Validations run in order:
 
@@ -284,6 +284,6 @@ If the second attempt also fails, the error is raised to the caller.
 ```
 
 Validation catches it:
-> `Data sources 'EmployeeInformation' and 'TotalEarnings' are used together but have no explicit join and are not in the same MultiSelect module`
+> `Data sources are not all connected. Disconnected groups: [EmployeeInformation] / [TotalEarnings]. Add explicit joins between groups or use data sources from the same MultiSelect module.`
 
 The error is fed back to the LLM, which self-corrects by adding the join.

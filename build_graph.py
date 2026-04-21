@@ -106,35 +106,36 @@ def build_graph(tx, schema):
         )
 
     # JOINS_WITH edges — between fields in different data sources (within AND across modules)
-    # Collect every data source and its fields + join mappings across all modules
-    all_ds = []  # [(module_id, ds_id, ds_dict), ...]
+    # Build a reverse index: field_id → [(module_id, ds_id)] for fast lookup
+    field_ds_index = {}  # field_id → [(module_id, ds_id), ...]
     for module_id, module in schema.items():
         for ds_id, ds in module["dataSources"].items():
-            all_ds.append((module_id, ds_id, ds))
+            for fid in (ds.get("dataSourceFields") or {}):
+                field_ds_index.setdefault(fid, []).append((module_id, ds_id))
 
-    for module_id, ds_id, ds in all_ds:
-        mappings = ds.get("joinColumnMappings") or {}
-        for left_field, right_fields in mappings.items():
-            for right_field in right_fields:
-                # Link this data source's join column to the matching column
-                # in every OTHER data source (same or different module)
-                for other_mod_id, other_ds_id, other_ds in all_ds:
-                    if other_ds_id == ds_id:
-                        continue
-                    if right_field in (other_ds.get("dataSourceFields") or {}):
-                        tx.run(
-                            """
-                            MATCH (a:Field {moduleId: $modA, dataSourceId: $dsA, fieldId: $fieldA})
-                            MATCH (b:Field {moduleId: $modB, dataSourceId: $dsB, fieldId: $fieldB})
-                            MERGE (a)-[:JOINS_WITH]-(b)
-                            """,
-                            modA=module_id,
-                            dsA=ds_id,
-                            fieldA=left_field,
-                            modB=other_mod_id,
-                            dsB=other_ds_id,
-                            fieldB=right_field,
-                        )
+    # Collect all join edges in Python, then batch into a single UNWIND query
+    join_edges = []
+    for module_id, module in schema.items():
+        for ds_id, ds in module["dataSources"].items():
+            for left_field, right_fields in (ds.get("joinColumnMappings") or {}).items():
+                for right_field in right_fields:
+                    for other_mod_id, other_ds_id in field_ds_index.get(right_field, []):
+                        if other_ds_id != ds_id:
+                            join_edges.append({
+                                "modA": module_id, "dsA": ds_id, "fieldA": left_field,
+                                "modB": other_mod_id, "dsB": other_ds_id, "fieldB": right_field,
+                            })
+
+    if join_edges:
+        tx.run(
+            """
+            UNWIND $edges AS e
+            MATCH (a:Field {moduleId: e.modA, dataSourceId: e.dsA, fieldId: e.fieldA})
+            MATCH (b:Field {moduleId: e.modB, dataSourceId: e.dsB, fieldId: e.fieldB})
+            MERGE (a)-[:JOINS_WITH]-(b)
+            """,
+            edges=join_edges,
+        )
 
     # SAME_AS edges — across modules, fields sharing the same onlineSource
     tx.run(
