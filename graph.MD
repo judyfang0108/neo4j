@@ -33,15 +33,51 @@
 - Connects each module to every field belonging to any of its data sources
 - Primary structural edge
 
-**`(Field)-[:JOINS_WITH]-(Field)`** *(undirected, scoped within a module)*
-- Links join-key fields between different data sources inside the same module
-- Built from `joinColumnMappings` in the source JSON
+**`(Field)-[:JOINS_WITH]-(Field)`** *(undirected, within or across modules)*
+- Links join-key fields between different data sources, built from `joinColumnMappings` in the source JSON
+- Works **within** a module (e.g. two data sources sharing `EmployeeCode`) and **across** modules (e.g. `EmployeeInformation.EmployeeCode` ↔ `TotalEarnings.EmployeeCode`)
 - Tells the agent: "these data sources can be combined in one query via these fields"
-- Only meaningful in `MultiSelect` modules
+- **Note:** In `MultiSelect` modules, all data sources are implicitly combinable — no explicit join or `JOINS_WITH` edge is needed. The agent should use `selectType` on the Module node to determine this.
 
 **`(Field)-[:SAME_AS]-(Field)`** *(undirected, across modules)*
 - Links fields that share the same `onlineSource`
 - Tells the agent: "these refer to the same real-world entity, even though they live in different query contexts — coordinate via multiple queries, don't try to join in one"
+
+## Join rules (with schema.json example)
+
+There are two ways data sources can be combined in a single query:
+
+### 1. Implicit join — MultiSelect modules
+
+If a module has `selectType: MultiSelect`, **all** data sources inside it can be combined freely — no explicit join or join column is needed.
+
+**Example:** The `EmployeeInformation` module is `MultiSelect` and contains two data sources:
+- `EmployeeInformation` (Employee Information)
+- `PayInformation` (Pay Information)
+
+`PayInformation` has no `EmployeeCode` field and no `joinColumnMappings`, but it can still be combined with `EmployeeInformation` because they share the same MultiSelect module. A query can select `EmployeeName` from `EmployeeInformation` and `AnnualSalary` from `PayInformation` with no join clause.
+
+### 2. Explicit join — cross-module via `joinColumnMappings`
+
+Data sources in **different** modules can be joined when their `joinColumnMappings` reference a common column that exists in both.
+
+**Example:** `EmployeeInformation` data source (in `EmployeeInformation` module) has:
+```json
+"autoJoinColumns": ["EmployeeCode"],
+"joinColumnMappings": { "EmployeeCode": ["EmployeeCode"] }
+```
+`TotalEarnings` data source (in `TimeAndAttendance` module) also has `EmployeeCode` as a field. This produces a `JOINS_WITH` edge between them, so a query can join the two via `EmployeeCode`.
+
+### Full edge map for the current schema
+
+| Module A | Data Source A | Module B | Data Source B | Join type | Via |
+|---|---|---|---|---|---|
+| `EmployeeInformation` | `EmployeeInformation` | `EmployeeInformation` | `PayInformation` | Implicit (MultiSelect) | Same module |
+| `EmployeeInformation` | `EmployeeInformation` | `TimeAndAttendance` | `TotalEarnings` | Explicit (cross-module) | `EmployeeCode` |
+| `EmployeeInformation` | `EmployeeInformation` | `TimeAndAttendance` | `PunchPairs` | Explicit (cross-module) | `EmployeeCode` |
+| `TimeAndAttendance` | `TotalEarnings` | `TimeAndAttendance` | `PunchPairs` | Explicit (within module) | `EmployeeCode` |
+
+`PayInformation` (in `EmployeeInformation` module) has no `EmployeeCode` field, so it has no `JOINS_WITH` edges — it is only reachable through the MultiSelect implicit join with other data sources in its module.
 
 ## Stable identity
 
@@ -54,8 +90,8 @@
 1. **Embed** the user's question.
 2. *(Optional)* Vector-search `Module.embedding` to narrow scope.
 3. Vector-search `Field.embedding` to find candidate fields by semantic similarity.
-4. For each candidate, walk to its `Module` via `HAS_FIELD` to read `selectType` and plan whether multiple data sources can be combined.
-5. Walk `JOINS_WITH` edges within a module to expand the field set into a single joinable query.
+4. For each candidate, walk to its `Module` via `HAS_FIELD` to read `selectType`. If `MultiSelect`, all data sources in that module can be freely combined without explicit joins.
+5. Walk `JOINS_WITH` edges (within or across modules) to expand the field set into a single joinable query. Cross-module joins require explicit join fields.
 6. Walk `SAME_AS` edges across modules to detect when a question requires multiple coordinated queries stitched together.
 7. Use Field properties (`type`, `enumOptions`, `is_freeform`, `example_data`, `filterType`, `filterLabel`) to construct valid filter clauses — including mapping user phrases like "California" to stored values like "CA" via `example_data`.
 

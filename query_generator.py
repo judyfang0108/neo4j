@@ -94,6 +94,7 @@ class QueryGenerator:
                 """
                 MATCH (m:Module)-[:HAS_FIELD]->(f:Field)
                 RETURN m.moduleId AS moduleId, m.description AS moduleDesc,
+                       m.selectType AS selectType,
                        f.dataSourceId AS dsId, f.dataSourceDescription AS dsDesc,
                        f.fieldId AS fieldId, f.description AS fieldDesc,
                        f.type AS fieldType, f.enumOptions AS enumOptions,
@@ -125,7 +126,7 @@ class QueryGenerator:
                     required_filters[dsid].append((fid, filter_type))
 
                 if mid not in modules:
-                    modules[mid] = {"desc": r["moduleDesc"] or "", "dataSources": {}}
+                    modules[mid] = {"desc": r["moduleDesc"] or "", "selectType": r["selectType"] or "", "dataSources": {}}
                 ds_map = modules[mid]["dataSources"]
                 if dsid not in ds_map:
                     ds_map[dsid] = {"desc": r["dsDesc"] or "", "fields": []}
@@ -188,6 +189,14 @@ class QueryGenerator:
         for left_ds, left_f, right_ds, right_f in joins:
             self._join_pairs.add((left_ds, left_f, right_ds, right_f))
             self._join_pairs.add((right_ds, right_f, left_ds, left_f))
+        # Track module selectType and which module each data source belongs to
+        self._module_select_type = {
+            mid: mdata["selectType"] for mid, mdata in modules.items()
+        }
+        self._ds_to_module = {}
+        for mid, mdata in modules.items():
+            for dsid in mdata["dataSources"]:
+                self._ds_to_module[dsid] = mid
         return modules, joins, same_as
 
     def _build_system_prompt(
@@ -199,6 +208,7 @@ class QueryGenerator:
             header = f"\n### {mid}"
             if mdata["desc"]:
                 header += f" - {mdata['desc']}"
+            header += f" (selectType: {mdata['selectType']})" if mdata["selectType"] else ""
             schema_summary.append(header)
             for dsid, dsdata in mdata["dataSources"].items():
                 ds_line = f"  **Data Source: {dsid}"
@@ -209,10 +219,28 @@ class QueryGenerator:
                         f"    Fields: {', '.join(dsdata['fields'])}"
                     )
 
+        # MultiSelect modules — all data sources are implicitly combinable
+        multiselect_modules = []
+        for mid, mdata in modules.items():
+            if (mdata.get("selectType") or "").lower() == "multiselect":
+                ds_list = list(mdata["dataSources"].keys())
+                if len(ds_list) > 1:
+                    multiselect_modules.append((mid, ds_list))
+        multiselect_ds = set()
+        if multiselect_modules:
+            schema_summary.append("\n## MultiSelect Modules (Implicit Joins)")
+            schema_summary.append(
+                "All data sources in these modules can be combined in a single query WITHOUT explicit joins — "
+                "just use fields from any of their data sources together:"
+            )
+            for mid, ds_list in multiselect_modules:
+                schema_summary.append(f"  - {mid}: {', '.join(ds_list)}")
+                multiselect_ds.update(ds_list)
+
         if joins:
             schema_summary.append("\n## Joinable Fields (JOINS_WITH)")
             schema_summary.append(
-                "These field pairs can be used in joins between data sources:"
+                "These field pairs can be used in explicit joins between data sources (including cross-module):"
             )
             for left_ds, left_f, right_ds, right_f in joins:
                 schema_summary.append(
@@ -226,7 +254,7 @@ class QueryGenerator:
         for left_ds, _, right_ds, _ in joins:
             joinable_ds.add(left_ds)
             joinable_ds.add(right_ds)
-        unjoinable = all_ds - joinable_ds
+        unjoinable = all_ds - joinable_ds - multiselect_ds
         if unjoinable:
             schema_summary.append("\n## Non-Joinable Data Sources")
             schema_summary.append(
@@ -306,11 +334,20 @@ class QueryGenerator:
                     join.right_data_source,
                     join.right_field,
                 ) not in self._join_pairs:
-                    errors.append(
-                        f"Invalid join: no JOINS_WITH relationship between "
-                        f"'{join.left_data_source}.{join.left_field}' and "
-                        f"'{join.right_data_source}.{join.right_field}'"
+                    # Allow implicit joins within the same MultiSelect module
+                    left_mod = self._ds_to_module.get(join.left_data_source)
+                    right_mod = self._ds_to_module.get(join.right_data_source)
+                    in_same_multiselect = (
+                        left_mod
+                        and left_mod == right_mod
+                        and (self._module_select_type.get(left_mod) or "").lower() == "multiselect"
                     )
+                    if not in_same_multiselect:
+                        errors.append(
+                            f"Invalid join: no JOINS_WITH relationship between "
+                            f"'{join.left_data_source}.{join.left_field}' and "
+                            f"'{join.right_data_source}.{join.right_field}'"
+                        )
 
         if query.aggregation:
             for agg_func in query.aggregation.functions:
@@ -409,6 +446,32 @@ class QueryGenerator:
                     if (ds, fid) not in filtered_fields:
                         errors.append(
                             f"Data source '{ds}' requires a filter on '{fid}'"
+                        )
+
+        # Check that every pair of data sources is actually combinable:
+        # either in the same MultiSelect module, or connected by an explicit join
+        if len(used_ds) > 1:
+            joined_ds = set()
+            if query.joins:
+                for j in query.joins:
+                    joined_ds.add((j.left_data_source, j.right_data_source))
+                    joined_ds.add((j.right_data_source, j.left_data_source))
+
+            ds_list = sorted(used_ds)
+            for i, ds_a in enumerate(ds_list):
+                for ds_b in ds_list[i + 1:]:
+                    mod_a = self._ds_to_module.get(ds_a)
+                    mod_b = self._ds_to_module.get(ds_b)
+                    in_same_multiselect = (
+                        mod_a
+                        and mod_a == mod_b
+                        and (self._module_select_type.get(mod_a) or "").lower() == "multiselect"
+                    )
+                    has_explicit_join = (ds_a, ds_b) in joined_ds
+                    if not in_same_multiselect and not has_explicit_join:
+                        errors.append(
+                            f"Data sources '{ds_a}' and '{ds_b}' are used together "
+                            f"but have no explicit join and are not in the same MultiSelect module"
                         )
 
         return errors

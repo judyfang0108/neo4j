@@ -105,29 +105,36 @@ def build_graph(tx, schema):
             **f,
         )
 
-    # JOINS_WITH edges — within a module, between fields in different data sources
+    # JOINS_WITH edges — between fields in different data sources (within AND across modules)
+    # Collect every data source and its fields + join mappings across all modules
+    all_ds = []  # [(module_id, ds_id, ds_dict), ...]
     for module_id, module in schema.items():
         for ds_id, ds in module["dataSources"].items():
-            mappings = ds.get("joinColumnMappings") or {}
-            for left_field, right_fields in mappings.items():
-                for right_field in right_fields:
-                    # Link this data source's join column to the same column in every other data source in the module
-                    for other_ds_id, other_ds in module["dataSources"].items():
-                        if other_ds_id == ds_id:
-                            continue
-                        if right_field in (other_ds.get("dataSourceFields") or {}):
-                            tx.run(
-                                """
-                                MATCH (a:Field {moduleId: $moduleId, dataSourceId: $dsA, fieldId: $fieldA})
-                                MATCH (b:Field {moduleId: $moduleId, dataSourceId: $dsB, fieldId: $fieldB})
-                                MERGE (a)-[:JOINS_WITH]-(b)
-                                """,
-                                moduleId=module_id,
-                                dsA=ds_id,
-                                fieldA=left_field,
-                                dsB=other_ds_id,
-                                fieldB=right_field,
-                            )
+            all_ds.append((module_id, ds_id, ds))
+
+    for module_id, ds_id, ds in all_ds:
+        mappings = ds.get("joinColumnMappings") or {}
+        for left_field, right_fields in mappings.items():
+            for right_field in right_fields:
+                # Link this data source's join column to the matching column
+                # in every OTHER data source (same or different module)
+                for other_mod_id, other_ds_id, other_ds in all_ds:
+                    if other_ds_id == ds_id:
+                        continue
+                    if right_field in (other_ds.get("dataSourceFields") or {}):
+                        tx.run(
+                            """
+                            MATCH (a:Field {moduleId: $modA, dataSourceId: $dsA, fieldId: $fieldA})
+                            MATCH (b:Field {moduleId: $modB, dataSourceId: $dsB, fieldId: $fieldB})
+                            MERGE (a)-[:JOINS_WITH]-(b)
+                            """,
+                            modA=module_id,
+                            dsA=ds_id,
+                            fieldA=left_field,
+                            modB=other_mod_id,
+                            dsB=other_ds_id,
+                            fieldB=right_field,
+                        )
 
     # SAME_AS edges — across modules, fields sharing the same onlineSource
     tx.run(

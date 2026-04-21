@@ -47,7 +47,7 @@ def build_system_prompt(schema_summary_text: str) -> str:
 
 1. ONLY use field names and data sources from the schema above. NEVER invent fields.
 2. Every filter MUST have `logicType`: "CONDITION" for leaf conditions, "AND"/"OR" for groups.
-3. ONLY join data sources listed under "Joinable Fields". Non-Joinable data sources CANNOT be joined.
+3. **MultiSelect modules**: all data sources can be combined in a single query WITHOUT explicit joins — just use fields from any of their data sources. For **cross-module** or other joins, ONLY use field pairs listed under "Joinable Fields". Non-Joinable data sources CANNOT be joined.
 4. If the query CANNOT be built (missing fields, no valid joins), return: {{}}
 5. `aggregation` requires BOTH `functions` and `group_by`.
 6. Dates: YYYY-MM-DD. Use BETWEEN with `value` and `value_end` for ranges.
@@ -98,7 +98,11 @@ Q: "How many employees are in each department?"
 {{"fields": [{{"field_name": "DepartmentCode", "dataSource": "EmployeeInformation"}}], "aggregation": {{"functions": [{{"alias": "EmployeeCount", "field_name": "*", "dataSource": "EmployeeInformation", "operator": "COUNT"}}], "group_by": [{{"field": "DepartmentCode", "dataSource": "EmployeeInformation"}}]}}}}
 
 Q: "Show me detailed salary breakdown for all employees"
-(PayInformation cannot be joined with EmployeeInformation — no common join field)
-{{}}
+(EmployeeInformation and PayInformation are in a MultiSelect module — combine freely, no explicit join needed.)
+{{"fields": [{{"field_name": "EmployeeName", "dataSource": "EmployeeInformation"}}, {{"field_name": "AnnualSalary", "dataSource": "PayInformation"}}, {{"field_name": "PayFrequency", "dataSource": "PayInformation"}}]}}
+
+Q: "Show employee names with their total earning amounts"
+(Cross-module join: EmployeeInformation and TotalEarnings are in different modules but joinable via EmployeeCode.)
+{{"fields": [{{"field_name": "EmployeeName", "dataSource": "EmployeeInformation"}}, {{"field_name": "EarnAmount", "dataSource": "TotalEarnings"}}], "joins": [{{"left_data_source": "EmployeeInformation", "right_data_source": "TotalEarnings", "left_field": "EmployeeCode", "right_field": "EmployeeCode", "join_type": "INNER"}}]}}
 
 Respond ONLY with valid JSON. No explanation, no markdown."""
